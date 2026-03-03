@@ -1,0 +1,23 @@
+{{ define "content" }}
+<h1 class="h3 mb-3">View Secure Note</h1>
+<div class="mb-3">
+  <label class="form-label">Title</label>
+  <input class="form-control" value="{{ .ItemName }}" disabled>
+</div>
+{{ if .Body }}
+  <div class="mb-3">
+    <label class="form-label">Body</label>
+    <textarea class="form-control" rows="10" readonly>{{ .Body }}</textarea>
+  </div>
+{{ else }}
+  {{ if .Unlocked }}
+    <form method="post" action="/notes/view" data-require-unlock>
+      <input type="hidden" name="id" value="{{ .ItemID }}">
+      <button class="btn btn-primary" type="submit">View</button>
+      <a class="btn btn-outline-secondary" href="/notes">Cancel</a>
+    </form>
+  {{ else }}
+    <div class="alert alert-warning">Locked. Use the Unlock button in the top bar to view this note.</div>
+  {{ end }}
+{{ end }}
+{{ end }}

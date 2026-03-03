@@ -1,0 +1,37 @@
+{{ define "content" }}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">Secure Notes</h1>
+  <a class="btn btn-primary" href="/notes/new">New</a>
+</div>
+<table class="table table-striped">
+  <thead>
+    <tr>
+      <th>Title</th>
+      <th>Updated</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{ if .Items }}
+      {{ range .Items }}
+      <tr>
+        <td>{{ .Title }}</td>
+        <td>{{ .UpdatedAt }}</td>
+        <td>
+          <a href="/notes/edit?id={{ .ID }}" class="btn btn-sm btn-outline-secondary">Edit</a>
+          {{ if $.Unlocked }}
+            <a href="/notes/view?id={{ .ID }}" class="btn btn-sm btn-outline-primary">View</a>
+            <a href="/notes/delete?id={{ .ID }}" class="btn btn-sm btn-outline-danger">Delete</a>
+          {{ else }}
+            <span class="btn btn-sm btn-outline-primary disabled">View</span>
+            <span class="btn btn-sm btn-outline-danger disabled">Delete</span>
+          {{ end }}
+        </td>
+      </tr>
+      {{ end }}
+    {{ else }}
+      <tr><td colspan="3" class="text-muted">No notes</td></tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ end }}

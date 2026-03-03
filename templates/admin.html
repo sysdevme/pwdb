@@ -1,0 +1,143 @@
+{{ define "content" }}
+<h1 class="h3 mb-3">Admin</h1>
+{{ if and .Unlocked .IsAdmin }}
+  {{ if .Message }}
+  <div class="alert alert-success">{{ .Message }}</div>
+  {{ end }}
+  <div class="card mb-4">
+    <div class="card-body">
+      <h5 class="card-title">Backup</h5>
+      <p class="card-text">Export passwords and notes to a JSON file.</p>
+      <a class="btn btn-primary" href="/admin/backup" id="backupButton">Download Backup</a>
+      <div class="mt-2 d-none" id="backupSpinner">
+        <div class="spinner-border text-primary" role="status"></div>
+        <span class="ms-2">Preparing backup…</span>
+      </div>
+    </div>
+  </div>
+  <div class="card mb-4">
+    <div class="card-body">
+      <h5 class="card-title">Rebuild From Import Raw</h5>
+      <p class="card-text">Re-parse stored import_raw and update entries with the latest parser.</p>
+      <form method="post" action="/admin/rebuild" id="rebuildForm">
+        <button class="btn btn-outline-primary" type="submit" id="rebuildSubmit">Rebuild Now</button>
+      </form>
+      <div class="mt-2 d-none" id="rebuildSpinner">
+        <div class="spinner-border text-primary" role="status"></div>
+        <span class="ms-2">Rebuilding…</span>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-body">
+      <h5 class="card-title">Restore</h5>
+      <p class="card-text">Restore from a backup JSON file.</p>
+      <form method="post" action="/admin/restore" enctype="multipart/form-data" id="restoreForm">
+        <div class="mb-3">
+          <input type="file" name="file" class="form-control" accept=".json" required>
+        </div>
+        <button class="btn btn-warning" type="submit" id="restoreSubmit">Restore</button>
+      </form>
+      <div class="mt-2 d-none" id="restoreSpinner">
+        <div class="spinner-border text-warning" role="status"></div>
+        <span class="ms-2">Restoring…</span>
+      </div>
+    </div>
+  </div>
+  <div class="card mt-4">
+    <div class="card-body">
+      <h5 class="card-title">Create User</h5>
+      <form method="post" action="/admin/users">
+        <div class="mb-3">
+          <label class="form-label">Email</label>
+          <input type="email" name="email" class="form-control" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Login Password</label>
+          <input type="password" name="login_password" class="form-control" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Master Password</label>
+          <input type="password" name="master_password" class="form-control" required>
+        </div>
+        <button class="btn btn-outline-primary" type="submit">Create User</button>
+      </form>
+    </div>
+  </div>
+  <div class="card mt-4">
+    <div class="card-body">
+      <h5 class="card-title">Users</h5>
+      <div class="table-responsive">
+        <table class="table table-striped align-middle">
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Created</th>
+              <th>Update Passwords</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ if .Users }}
+              {{ range .Users }}
+                <tr>
+                  <td>{{ .Email }}</td>
+                  <td>{{ if .IsAdmin }}Admin{{ else }}User{{ end }}</td>
+                  <td>{{ .CreatedAt.Format "2006-01-02" }}</td>
+                  <td>
+                    <form method="post" action="/admin/users/update" class="row g-2">
+                      <input type="hidden" name="user_id" value="{{ .ID }}">
+                      <div class="col-md-4">
+                        <input type="password" name="login_password" class="form-control" placeholder="Login password" required>
+                      </div>
+                      <div class="col-md-4">
+                        <input type="password" name="master_password" class="form-control" placeholder="Master password" required>
+                      </div>
+                      <div class="col-md-4">
+                        <button class="btn btn-outline-secondary w-100" type="submit">Update</button>
+                      </div>
+                    </form>
+                  </td>
+                </tr>
+              {{ end }}
+            {{ else }}
+              <tr><td colspan="4" class="text-muted">No users</td></tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{{ else }}
+  <div class="alert alert-warning">Locked or insufficient permissions.</div>
+{{ end }}
+{{ end }}
+<script>
+  (function () {
+    const backupButton = document.getElementById("backupButton");
+    const backupSpinner = document.getElementById("backupSpinner");
+    if (backupButton && backupSpinner) {
+      backupButton.addEventListener("click", () => {
+        backupSpinner.classList.remove("d-none");
+      });
+    }
+    const rebuildForm = document.getElementById("rebuildForm");
+    const rebuildSpinner = document.getElementById("rebuildSpinner");
+    const rebuildSubmit = document.getElementById("rebuildSubmit");
+    if (rebuildForm && rebuildSpinner && rebuildSubmit) {
+      rebuildForm.addEventListener("submit", () => {
+        rebuildSubmit.disabled = true;
+        rebuildSpinner.classList.remove("d-none");
+      });
+    }
+    const restoreForm = document.getElementById("restoreForm");
+    const restoreSpinner = document.getElementById("restoreSpinner");
+    const restoreSubmit = document.getElementById("restoreSubmit");
+    if (restoreForm && restoreSpinner && restoreSubmit) {
+      restoreForm.addEventListener("submit", () => {
+        restoreSubmit.disabled = true;
+        restoreSpinner.classList.remove("d-none");
+      });
+    }
+  })();
+</script>

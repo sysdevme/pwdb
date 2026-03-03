@@ -1,0 +1,28 @@
+{{ define "content" }}
+<div class="alert alert-warning">
+  <h1 class="h4 mb-2">{{ .Title }}</h1>
+  <p class="mb-0">This action cannot be undone. Please retype the master password to confirm deletion.</p>
+</div>
+
+<form method="POST" action="{{.DeletePath}}" data-require-unlock>
+  <input type="hidden" name="id" value="{{.ItemID}}">
+  <button type="submit" class="btn btn-danger">Delete</button>
+</form>
+<form method="post" action="{{ .DeletePath }}" data-require-unlock>
+  <input type="hidden" name="id" value="{{ .ItemID }}">
+  <div class="mb-3">
+    <label class="form-label">Item</label>
+    <input class="form-control" value="{{ .ItemName }}" disabled>
+  </div>
+  <div class="mb-3">
+    <button type="button" class="btn btn-outline-primary" onclick="unlockWithBiometric()">Unlock with Touch ID</button>
+  </div>
+  {{ if .Unlocked }}
+    <div class="alert alert-success">Unlocked. You can delete.</div>
+  {{ else }}
+    <div class="alert alert-warning">Locked. Use the Unlock button in the top bar to continue.</div>
+  {{ end }}
+  <button class="btn btn-danger" type="submit" {{ if not .Unlocked }}disabled{{ end }}>Delete</button>
+  <a class="btn btn-outline-secondary" href="/">Cancel</a>
+</form>
+{{ end }}

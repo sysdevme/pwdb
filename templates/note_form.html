@@ -1,0 +1,18 @@
+{{ define "content" }}
+<h1 class="h3 mb-3">{{ .Title }}</h1>
+<form method="post" action="{{ if .Item.ID }}/notes/edit{{ else }}/notes/new{{ end }}">
+  {{ if .Item.ID }}
+  <input type="hidden" name="id" value="{{ .Item.ID }}">
+  {{ end }}
+  <div class="mb-3">
+    <label class="form-label">Title</label>
+    <input name="title" class="form-control" required value="{{ .Item.Title }}">
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Body</label>
+    <textarea name="body" class="form-control" rows="8" required>{{ .Item.Body }}</textarea>
+  </div>
+  <button class="btn btn-primary" type="submit">Save</button>
+  <a class="btn btn-outline-secondary" href="/notes">Cancel</a>
+</form>
+{{ end }}
