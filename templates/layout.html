@@ -27,6 +27,7 @@
             <li class="nav-item"><a class="nav-link" href="/groups">Groups</a></li>
             <li class="nav-item"><a class="nav-link" href="/tags">Tags</a></li>
             <li class="nav-item"><a class="nav-link" href="/import/1password">Import</a></li>
+            <li class="nav-item"><a class="nav-link" href="/account">Account</a></li>
             {{ if .IsAdmin }}
             <li class="nav-item"><a class="nav-link" href="/admin">Admin</a></li>
             {{ end }}
@@ -82,10 +83,10 @@
           </div>
           <div class="modal-body">
             <form method="post" action="/auth/biometric-unlock" id="unlockForm">
-              <input type="hidden" name="next" value="{{ .RequestPath }}">
+              <input type="hidden" name="next" id="unlockNext" value="{{ .RequestPath }}">
               <div class="mb-3">
                 <label class="form-label">Master Password</label>
-                <input type="password" name="master_password" class="form-control" required>
+                <input type="password" name="master_password" class="form-control" id="unlockMasterPassword" required>
               </div>
               <button class="btn btn-primary" type="submit">Unlock</button>
             </form>
@@ -94,7 +95,49 @@
       </div>
     </div>
     <script>
+      function isWindowsPlatform() {
+        if (navigator.userAgentData && navigator.userAgentData.platform) {
+          return navigator.userAgentData.platform.toLowerCase().includes("win");
+        }
+        const platform = (navigator.platform || "").toLowerCase();
+        const ua = (navigator.userAgent || "").toLowerCase();
+        return platform.includes("win") || ua.includes("windows");
+      }
+      function currentPath() {
+        return window.location.pathname + window.location.search;
+      }
+      function hideUnlockExpiredOverlay() {
+        const overlay = document.getElementById("unlockExpiredOverlay");
+        if (overlay) {
+          overlay.style.display = "none";
+        }
+      }
+      function showUnlockPasswordModal(nextPath) {
+        hideUnlockExpiredOverlay();
+        const nextInput = document.getElementById("unlockNext");
+        if (nextInput) {
+          nextInput.value = nextPath || currentPath();
+        }
+        const modalEl = document.getElementById("unlockPasswordModal");
+        if (modalEl && window.bootstrap) {
+          const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+          modal.show();
+          modalEl.addEventListener("shown.bs.modal", () => {
+            const passwordInput = document.getElementById("unlockMasterPassword");
+            if (passwordInput) {
+              passwordInput.focus();
+              passwordInput.select();
+            }
+          }, { once: true });
+          return;
+        }
+        alert("Unlock required.");
+      }
       async function unlockWithBiometric(nextPath) {
+        if (isWindowsPlatform()) {
+          showUnlockPasswordModal(nextPath);
+          return;
+        }
         try {
           const statusResp = await fetch("http://127.0.0.1:9797/status");
           if (!statusResp.ok) throw new Error("Helper not available");
@@ -115,21 +158,14 @@
           if (!serverResp.ok) throw new Error("Unlock failed");
           location.reload();
         } catch (err) {
-          const modalEl = document.getElementById("unlockPasswordModal");
-          if (modalEl && window.bootstrap) {
-            const modal = new bootstrap.Modal(modalEl);
-            modal.show();
-          } else {
-            alert("Biometric unlock failed.");
-          }
+          showUnlockPasswordModal(nextPath);
         }
       }
       (function () {
         const btn = document.getElementById("unlockButton");
         if (btn) {
           btn.addEventListener("click", () => {
-            const nextPath = window.location.pathname + window.location.search;
-            unlockWithBiometric(nextPath);
+            unlockWithBiometric(currentPath());
           });
         }
       })();
@@ -143,8 +179,7 @@
         const unlockLater = document.getElementById("unlockExpiredLater");
         if (unlockNow) {
           unlockNow.addEventListener("click", () => {
-            const nextPath = window.location.pathname + window.location.search;
-            unlockWithBiometric(nextPath);
+            showUnlockPasswordModal(currentPath());
           });
         }
         if (unlockLater && overlay) {
@@ -153,7 +188,7 @@
           });
         }
         const showOverlay = () => {
-          if (overlay) overlay.style.display = "block";
+          showUnlockPasswordModal(currentPath());
         };
         const tick = () => {
           if (seconds <= 0) {

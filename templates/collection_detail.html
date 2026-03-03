@@ -1,0 +1,46 @@
+{{ define "content" }}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-0">{{ .Kind }}: {{ .Name }}</h1>
+    <div class="text-muted">Items currently using this {{ if eq .Kind "Tag" }}tag{{ else }}group{{ end }}.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ if eq .Kind "Tag" }}/tags{{ else }}/groups{{ end }}">Back</a>
+</div>
+
+<div class="card mb-4">
+  <div class="card-body">
+    <h2 class="h5">Passwords</h2>
+    {{ if .Passwords }}
+      <div class="list-group">
+        {{ range .Passwords }}
+          <a class="list-group-item list-group-item-action" href="/passwords/view?id={{ .ID }}">
+            <div class="fw-semibold">{{ .Title }}</div>
+            {{ if .Username }}<div class="small text-muted">Username: {{ .Username }}</div>{{ end }}
+            {{ if .URL }}<div class="small text-muted">{{ .URL }}</div>{{ end }}
+          </a>
+        {{ end }}
+      </div>
+    {{ else }}
+      <div class="text-muted">No passwords use this {{ if eq .Kind "Tag" }}tag{{ else }}group{{ end }}.</div>
+    {{ end }}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <h2 class="h5">Secure Notes</h2>
+    {{ if .Notes }}
+      <div class="list-group">
+        {{ range .Notes }}
+          <a class="list-group-item list-group-item-action" href="/notes/view?id={{ .ID }}">
+            <div class="fw-semibold">{{ .Title }}</div>
+            <div class="small text-muted">Updated {{ .UpdatedAt.Format "2006-01-02 15:04" }}</div>
+          </a>
+        {{ end }}
+      </div>
+    {{ else }}
+      <div class="text-muted">No secure notes use this {{ if eq .Kind "Tag" }}tag{{ else }}group{{ end }}.</div>
+    {{ end }}
+  </div>
+</div>
+{{ end }}

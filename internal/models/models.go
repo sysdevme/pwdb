@@ -5,6 +5,7 @@ import "time"
 type PasswordEntry struct {
 	ID           string
 	UserID       string
+	OwnerEmail    string `json:"-"`
 	Title        string
 	Username     string
 	Password     string
@@ -21,6 +22,7 @@ type PasswordEntry struct {
 type SecureNote struct {
 	ID           string
 	UserID       string
+	OwnerEmail    string `json:"-"`
 	Title        string
 	Body         string
 	Tags         []string
@@ -73,6 +75,7 @@ type Group struct {
 type User struct {
 	ID                 string
 	Email              string
+	Status             string
 	PasswordHash       string
 	MasterPasswordHash string
 	IsAdmin            bool

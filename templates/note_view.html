@@ -1,9 +1,18 @@
 {{ define "content" }}
 <h1 class="h3 mb-3">View Secure Note</h1>
+{{ if .Message }}
+  <div class="alert alert-info">{{ .Message }}</div>
+{{ end }}
 <div class="mb-3">
   <label class="form-label">Title</label>
   <input class="form-control" value="{{ .ItemName }}" disabled>
 </div>
+{{ if .OwnerEmail }}
+  <div class="mb-3">
+    <label class="form-label">Owner</label>
+    <input class="form-control" value="{{ .OwnerEmail }}" readonly>
+  </div>
+{{ end }}
 {{ if .TagsText }}
   <div class="mb-3">
     <label class="form-label">Tags</label>
@@ -31,5 +40,35 @@
   {{ else }}
     <div class="alert alert-warning">Locked. Use the Unlock button in the top bar to view this note.</div>
   {{ end }}
+{{ end }}
+{{ if and .CanManage .Unlocked }}
+  <div class="card mt-4">
+    <div class="card-body">
+      <h2 class="h5">Share</h2>
+      {{ if .SharedWith }}
+        <div class="mb-3">
+          {{ range .SharedWith }}
+            <span class="badge text-bg-light border me-1">{{ . }}</span>
+          {{ end }}
+        </div>
+      {{ end }}
+      <form method="post" action="/notes/share">
+        <input type="hidden" name="id" value="{{ .ItemID }}">
+        <div class="row g-2">
+          <div class="col-md-8">
+            <select name="share_email" class="form-select">
+              <option value="">Select active user</option>
+              {{ range .ShareTargets }}
+                <option value="{{ .Email }}">{{ .Email }}</option>
+              {{ end }}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <button class="btn btn-outline-primary w-100" type="submit">Share</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
 {{ end }}
 {{ end }}

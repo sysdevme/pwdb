@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -72,19 +73,25 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/passwords/update-password", s.handlePasswordUpdatePassword)
 	mux.HandleFunc("/passwords/delete", s.handlePasswordDelete)
 	mux.HandleFunc("/passwords/view", s.handlePasswordView)
+	mux.HandleFunc("/passwords/share", s.handlePasswordShare)
 	mux.HandleFunc("/notes", s.handleNotes)
 	mux.HandleFunc("/notes/new", s.handleNoteForm)
 	mux.HandleFunc("/notes/edit", s.handleNoteEdit)
 	mux.HandleFunc("/notes/delete", s.handleNoteDelete)
 	mux.HandleFunc("/notes/view", s.handleNoteView)
+	mux.HandleFunc("/notes/share", s.handleNoteShare)
 	mux.HandleFunc("/groups", s.handleGroups)
+	mux.HandleFunc("/groups/view", s.handleGroupDetail)
 	mux.HandleFunc("/tags", s.handleTags)
+	mux.HandleFunc("/tags/view", s.handleTagDetail)
 	mux.HandleFunc("/import/1password", s.handleImport1Password)
 	mux.HandleFunc("/import/issues", s.handleImportIssues)
 	mux.HandleFunc("/auth/biometric-unlock", s.handleBiometricUnlock)
 	mux.HandleFunc("/auth/biometric-token", s.handleBiometricToken)
 	mux.HandleFunc("/unlock", s.handleUnlockPage)
 	mux.HandleFunc("/lock", s.handleLock)
+	mux.HandleFunc("/account", s.handleAccount)
+	mux.HandleFunc("/account/update", s.handleAccountUpdate)
 	mux.HandleFunc("/admin", s.handleAdmin)
 	mux.HandleFunc("/admin/backup", s.handleAdminBackup)
 	mux.HandleFunc("/admin/restore", s.handleAdminRestore)
@@ -136,6 +143,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				"Error": "Invalid credentials",
 			})
 			return
+		}
+		if user.Status != "active" {
+			if err := s.store.SetUserStatus(r.Context(), user.ID, "active"); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			user.Status = "active"
 		}
 		sessionID := uuid.New().String()
 		expiresAt := time.Now().Add(7 * 24 * time.Hour)
@@ -227,6 +241,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		if err := s.store.CreateUser(r.Context(), models.User{
 			ID:                 adminID,
 			Email:              email,
+			Status:             "active",
 			PasswordHash:       loginHash,
 			MasterPasswordHash: masterHash,
 			IsAdmin:            true,
@@ -258,13 +273,19 @@ func (s *Server) handlePasswords(w http.ResponseWriter, r *http.Request) {
 	}
 	var viewItems []map[string]string
 	for _, item := range items {
+		sharedLabel := ""
+		if item.UserID != user.ID && item.OwnerEmail != "" {
+			sharedLabel = "Shared by " + item.OwnerEmail
+		}
 		viewItems = append(viewItems, map[string]string{
-			"ID":       item.ID,
-			"Title":    item.Title,
-			"Username": item.Username,
-			"URL":      item.URL,
-			"Tags":     strings.Join(item.Tags, ", "),
-			"Groups":   strings.Join(item.Groups, ", "),
+			"ID":          item.ID,
+			"Title":       item.Title,
+			"Username":    item.Username,
+			"URL":         item.URL,
+			"Tags":        strings.Join(item.Tags, ", "),
+			"Groups":      strings.Join(item.Groups, ", "),
+			"SharedLabel": sharedLabel,
+			"CanManage":   fmt.Sprintf("%t", item.UserID == user.ID),
 		})
 	}
 	s.renderWithUnlock(w, r, "passwords.html", map[string]any{
@@ -349,13 +370,13 @@ func (s *Server) handlePasswordEdit(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "missing id", http.StatusBadRequest)
 			return
 		}
-		entry, err := s.store.GetPassword(r.Context(), s.crypto, id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		user, ok := s.currentUser(r)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		user, ok := s.currentUser(r)
-		if !ok || entry.UserID != user.ID {
+		entry, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
+		if err != nil || entry.UserID != user.ID {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -448,7 +469,7 @@ func (s *Server) handlePasswordUpdatePassword(w http.ResponseWriter, r *http.Req
 		http.Error(w, "missing password", http.StatusBadRequest)
 		return
 	}
-	entry, err := s.store.GetPassword(r.Context(), s.crypto, id)
+	entry, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -473,13 +494,13 @@ func (s *Server) handlePasswordDelete(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "missing id", http.StatusBadRequest)
 			return
 		}
-		entry, err := s.store.GetPassword(r.Context(), s.crypto, id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		user, ok := s.currentUser(r)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		user, ok := s.currentUser(r)
-		if !ok || entry.UserID != user.ID {
+		entry, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
+		if err != nil || entry.UserID != user.ID {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -531,12 +552,18 @@ func (s *Server) handleNotes(w http.ResponseWriter, r *http.Request) {
 	}
 	var viewItems []map[string]string
 	for _, item := range items {
+		sharedLabel := ""
+		if item.UserID != user.ID && item.OwnerEmail != "" {
+			sharedLabel = "Shared by " + item.OwnerEmail
+		}
 		viewItems = append(viewItems, map[string]string{
-			"ID":      item.ID,
-			"Title":   item.Title,
-			"Updated": item.UpdatedAt.Format(time.RFC3339),
-			"Tags":    strings.Join(item.Tags, ", "),
-			"Groups":  strings.Join(item.Groups, ", "),
+			"ID":          item.ID,
+			"Title":       item.Title,
+			"Updated":     item.UpdatedAt.Format(time.RFC3339),
+			"Tags":        strings.Join(item.Tags, ", "),
+			"Groups":      strings.Join(item.Groups, ", "),
+			"SharedLabel": sharedLabel,
+			"CanManage":   fmt.Sprintf("%t", item.UserID == user.ID),
 		})
 	}
 	s.renderWithUnlock(w, r, "notes.html", map[string]any{
@@ -618,13 +645,13 @@ func (s *Server) handleNoteEdit(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "missing id", http.StatusBadRequest)
 			return
 		}
-		note, err := s.store.GetNote(r.Context(), s.crypto, id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		user, ok := s.currentUser(r)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		user, ok := s.currentUser(r)
-		if !ok || note.UserID != user.ID {
+		note, err := s.store.GetNote(r.Context(), s.crypto, id, user.ID)
+		if err != nil || note.UserID != user.ID {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -694,13 +721,13 @@ func (s *Server) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "missing id", http.StatusBadRequest)
 			return
 		}
-		note, err := s.store.GetNote(r.Context(), s.crypto, id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		user, ok := s.currentUser(r)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		user, ok := s.currentUser(r)
-		if !ok || note.UserID != user.ID {
+		note, err := s.store.GetNote(r.Context(), s.crypto, id, user.ID)
+		if err != nil || note.UserID != user.ID {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -736,6 +763,11 @@ func (s *Server) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNoteView(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		id := r.URL.Query().Get("id")
@@ -743,27 +775,12 @@ func (s *Server) handleNoteView(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "missing id", http.StatusBadRequest)
 			return
 		}
-		note, err := s.store.GetNote(r.Context(), s.crypto, id)
+		note, err := s.store.GetNote(r.Context(), s.crypto, id, user.ID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		user, ok := s.currentUser(r)
-		if !ok || note.UserID != user.ID {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		data := map[string]any{
-			"Title":      "View Secure Note",
-			"ItemID":     note.ID,
-			"ItemName":   note.Title,
-			"TagsText":   strings.Join(note.Tags, ", "),
-			"GroupsText": strings.Join(note.Groups, ", "),
-		}
-		if s.isUnlocked(r) {
-			data["Body"] = note.Body
-		}
-		s.renderWithUnlock(w, r, "note_view.html", data)
+		s.renderNoteView(w, r, user, note, s.isUnlocked(r), "")
 	case http.MethodPost:
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form", http.StatusBadRequest)
@@ -778,30 +795,23 @@ func (s *Server) handleNoteView(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unlock required", http.StatusUnauthorized)
 			return
 		}
-		note, err := s.store.GetNote(r.Context(), s.crypto, id)
+		note, err := s.store.GetNote(r.Context(), s.crypto, id, user.ID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		user, ok := s.currentUser(r)
-		if !ok || note.UserID != user.ID {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		s.renderWithUnlock(w, r, "note_view.html", map[string]any{
-			"Title":      "View Secure Note",
-			"ItemID":     note.ID,
-			"ItemName":   note.Title,
-			"Body":       note.Body,
-			"TagsText":   strings.Join(note.Tags, ", "),
-			"GroupsText": strings.Join(note.Groups, ", "),
-		})
+		s.renderNoteView(w, r, user, note, true, "")
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
 func (s *Server) handlePasswordView(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		id := r.URL.Query().Get("id")
@@ -809,33 +819,12 @@ func (s *Server) handlePasswordView(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "missing id", http.StatusBadRequest)
 			return
 		}
-		entry, err := s.store.GetPassword(r.Context(), s.crypto, id)
+		entry, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		user, ok := s.currentUser(r)
-		if !ok || entry.UserID != user.ID {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		data := map[string]any{
-			"Title":        "View Password",
-			"ItemID":       entry.ID,
-			"ItemName":     entry.Title,
-			"Username":     entry.Username,
-			"URL":          entry.URL,
-			"Notes":        entry.Notes,
-			"TagsText":     strings.Join(entry.Tags, ", "),
-			"GroupsText":   strings.Join(entry.Groups, ", "),
-			"ImportSource": entry.ImportSource,
-			"ImportRaw":    entry.ImportRaw,
-			"ImportRawB64": base64.StdEncoding.EncodeToString([]byte(entry.ImportRaw)),
-		}
-		if s.isUnlocked(r) {
-			data["Password"] = entry.Password
-		}
-		s.renderWithUnlock(w, r, "password_view.html", data)
+		s.renderPasswordView(w, r, user, entry, s.isUnlocked(r), "")
 	case http.MethodPost:
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form", http.StatusBadRequest)
@@ -850,33 +839,267 @@ func (s *Server) handlePasswordView(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unlock required", http.StatusUnauthorized)
 			return
 		}
-		entry, err := s.store.GetPassword(r.Context(), s.crypto, id)
+		entry, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		s.renderPasswordView(w, r, user, entry, true, "")
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) renderPasswordView(w http.ResponseWriter, r *http.Request, user models.User, entry models.PasswordEntry, showSecret bool, message string) {
+	canManage := entry.UserID == user.ID
+	data := map[string]any{
+		"Title":        "View Password",
+		"ItemID":       entry.ID,
+		"ItemName":     entry.Title,
+		"Username":     entry.Username,
+		"URL":          entry.URL,
+		"TagsText":     strings.Join(entry.Tags, ", "),
+		"GroupsText":   strings.Join(entry.Groups, ", "),
+		"ImportSource": entry.ImportSource,
+		"ImportRaw":    entry.ImportRaw,
+		"ImportRawB64": base64.StdEncoding.EncodeToString([]byte(entry.ImportRaw)),
+		"OwnerEmail":   entry.OwnerEmail,
+		"CanManage":    canManage,
+	}
+	if showSecret {
+		data["Password"] = entry.Password
+		data["Notes"] = entry.Notes
+	}
+	if message != "" {
+		data["Message"] = message
+	}
+	if canManage {
+		if shareTargets, err := s.store.ListActiveUsersExcept(r.Context(), user.ID); err == nil {
+			data["ShareTargets"] = shareTargets
+		}
+		if sharedWith, err := s.store.ListPasswordShareEmails(r.Context(), entry.ID); err == nil {
+			data["SharedWith"] = sharedWith
+		}
+	}
+	s.renderWithUnlock(w, r, "password_view.html", data)
+}
+
+func (s *Server) renderNoteView(w http.ResponseWriter, r *http.Request, user models.User, note models.SecureNote, showSecret bool, message string) {
+	canManage := note.UserID == user.ID
+	data := map[string]any{
+		"Title":      "View Secure Note",
+		"ItemID":     note.ID,
+		"ItemName":   note.Title,
+		"TagsText":   strings.Join(note.Tags, ", "),
+		"GroupsText": strings.Join(note.Groups, ", "),
+		"OwnerEmail": note.OwnerEmail,
+		"CanManage":  canManage,
+	}
+	if showSecret {
+		data["Body"] = note.Body
+	}
+	if message != "" {
+		data["Message"] = message
+	}
+	if canManage {
+		if shareTargets, err := s.store.ListActiveUsersExcept(r.Context(), user.ID); err == nil {
+			data["ShareTargets"] = shareTargets
+		}
+		if sharedWith, err := s.store.ListNoteShareEmails(r.Context(), note.ID); err == nil {
+			data["SharedWith"] = sharedWith
+		}
+	}
+	s.renderWithUnlock(w, r, "note_view.html", data)
+}
+
+func (s *Server) handlePasswordShare(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	id := r.FormValue("id")
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	entry, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
+	if err != nil || entry.UserID != user.ID {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	targetEmail := strings.TrimSpace(r.FormValue("share_email"))
+	if targetEmail == "" {
+		s.renderPasswordView(w, r, user, entry, true, "Select a user to share with.")
+		return
+	}
+	if err := s.store.SharePasswordWithUser(r.Context(), user.ID, id, targetEmail); err != nil {
+		s.renderPasswordView(w, r, user, entry, true, err.Error())
+		return
+	}
+	updated, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderPasswordView(w, r, user, updated, true, "Password shared.")
+}
+
+func (s *Server) handleNoteShare(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	id := r.FormValue("id")
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	note, err := s.store.GetNote(r.Context(), s.crypto, id, user.ID)
+	if err != nil || note.UserID != user.ID {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	targetEmail := strings.TrimSpace(r.FormValue("share_email"))
+	if targetEmail == "" {
+		s.renderNoteView(w, r, user, note, true, "Select a user to share with.")
+		return
+	}
+	if err := s.store.ShareNoteWithUser(r.Context(), user.ID, id, targetEmail); err != nil {
+		s.renderNoteView(w, r, user, note, true, err.Error())
+		return
+	}
+	updated, err := s.store.GetNote(r.Context(), s.crypto, id, user.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderNoteView(w, r, user, updated, true, "Secure note shared.")
+}
+
+func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	s.renderWithUnlock(w, r, "account.html", map[string]any{
+		"Title": "Account",
+		"User":  user,
+	})
+}
+
+func (s *Server) handleAccountUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	currentLogin := r.FormValue("current_login_password")
+	currentMaster := r.FormValue("current_master_password")
+	newLogin := r.FormValue("new_login_password")
+	newMaster := r.FormValue("new_master_password")
+	if strings.TrimSpace(newLogin) == "" && strings.TrimSpace(newMaster) == "" {
+		s.renderWithUnlock(w, r, "account.html", map[string]any{
+			"Title": "Account",
+			"User":  user,
+			"Error": "Provide a new login password, a new master password, or both.",
+		})
+		return
+	}
+	if strings.TrimSpace(newLogin) != "" && !crypto.VerifyPassword(currentLogin, user.PasswordHash) {
+		s.renderWithUnlock(w, r, "account.html", map[string]any{
+			"Title": "Account",
+			"User":  user,
+			"Error": "Current login password is invalid.",
+		})
+		return
+	}
+	if strings.TrimSpace(newMaster) != "" && !crypto.VerifyPassword(currentMaster, user.MasterPasswordHash) {
+		s.renderWithUnlock(w, r, "account.html", map[string]any{
+			"Title": "Account",
+			"User":  user,
+			"Error": "Current master password is invalid.",
+		})
+		return
+	}
+	if strings.TrimSpace(newLogin) != "" && strings.TrimSpace(newMaster) != "" && newLogin == newMaster {
+		s.renderWithUnlock(w, r, "account.html", map[string]any{
+			"Title": "Account",
+			"User":  user,
+			"Error": "Login and master passwords must differ.",
+		})
+		return
+	}
+	var loginHash *string
+	if strings.TrimSpace(newLogin) != "" {
+		hash, err := crypto.HashPassword(newLogin)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		user, ok := s.currentUser(r)
-		if !ok || entry.UserID != user.ID {
-			http.Error(w, "not found", http.StatusNotFound)
+		loginHash = &hash
+	}
+	var masterHash *string
+	if strings.TrimSpace(newMaster) != "" {
+		hash, err := crypto.HashPassword(newMaster)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		s.renderWithUnlock(w, r, "password_view.html", map[string]any{
-			"Title":        "View Password",
-			"ItemID":       entry.ID,
-			"ItemName":     entry.Title,
-			"Username":     entry.Username,
-			"URL":          entry.URL,
-			"Notes":        entry.Notes,
-			"TagsText":     strings.Join(entry.Tags, ", "),
-			"GroupsText":   strings.Join(entry.Groups, ", "),
-			"Password":     entry.Password,
-			"ImportSource": entry.ImportSource,
-			"ImportRaw":    entry.ImportRaw,
-			"ImportRawB64": base64.StdEncoding.EncodeToString([]byte(entry.ImportRaw)),
-		})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		masterHash = &hash
 	}
+	if err := s.store.UpdateUserCredentials(r.Context(), user.ID, loginHash, masterHash); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	updatedUser, err := s.store.GetUserByID(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderWithUnlock(w, r, "account.html", map[string]any{
+		"Title":   "Account",
+		"User":    updatedUser,
+		"Message": "Credentials updated.",
+	})
 }
 
 func (s *Server) handleBiometricUnlock(w http.ResponseWriter, r *http.Request) {
@@ -970,8 +1193,9 @@ func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
 	var viewItems []map[string]any
 	for _, g := range items {
 		viewItems = append(viewItems, map[string]any{
-			"Name":  g.Name,
+			"Name": g.Name,
 			"Count": g.Count,
+			"URL":  "/groups/view?name=" + urlQueryEscape(g.Name),
 		})
 	}
 	s.renderWithUnlock(w, r, "groups.html", map[string]any{
@@ -994,13 +1218,82 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 	var viewItems []map[string]any
 	for _, t := range items {
 		viewItems = append(viewItems, map[string]any{
-			"Name":  t.Name,
+			"Name": t.Name,
 			"Count": t.Count,
+			"URL":  "/tags/view?name=" + urlQueryEscape(t.Name),
 		})
 	}
 	s.renderWithUnlock(w, r, "tags.html", map[string]any{
 		"Title": "Tags",
 		"Items": viewItems,
+	})
+}
+
+func (s *Server) handleGroupDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		http.Error(w, "missing name", http.StatusBadRequest)
+		return
+	}
+	passwords, err := s.store.ListPasswordsByGroupName(r.Context(), user.ID, name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	notes, err := s.store.ListNotesByGroupName(r.Context(), user.ID, name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderWithUnlock(w, r, "collection_detail.html", map[string]any{
+		"Title":     "Group",
+		"Kind":      "Group",
+		"Name":      name,
+		"Passwords": passwords,
+		"Notes":     notes,
+	})
+}
+
+func (s *Server) handleTagDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		http.Error(w, "missing name", http.StatusBadRequest)
+		return
+	}
+	passwords, err := s.store.ListPasswordsByTagName(r.Context(), user.ID, name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	notes, err := s.store.ListNotesByTagName(r.Context(), user.ID, name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderWithUnlock(w, r, "collection_detail.html", map[string]any{
+		"Title":     "Tag",
+		"Kind":      "Tag",
+		"Name":      name,
+		"Passwords": passwords,
+		"Notes":     notes,
 	})
 }
 
@@ -1073,6 +1366,7 @@ func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.CreateUser(r.Context(), models.User{
 		Email:              email,
+		Status:             "pending",
 		PasswordHash:       loginHash,
 		MasterPasswordHash: masterHash,
 		IsAdmin:            false,
@@ -1173,7 +1467,7 @@ func (s *Server) handleAdminBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	var passwords []models.PasswordEntry
 	for _, id := range pwIDs {
-		entry, err := s.store.GetPassword(ctx, s.crypto, id)
+		entry, err := s.store.GetPassword(ctx, s.crypto, id, user.ID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1187,7 +1481,7 @@ func (s *Server) handleAdminBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	var notes []models.SecureNote
 	for _, id := range noteIDs {
-		note, err := s.store.GetNote(ctx, s.crypto, id)
+		note, err := s.store.GetNote(ctx, s.crypto, id, user.ID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1256,9 +1550,15 @@ func (s *Server) handleAdminRestore(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	users, err := s.store.ListUsers(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.renderWithUnlock(w, r, "admin.html", map[string]any{
 		"Title":   "Admin",
 		"Message": fmt.Sprintf("Restored %d passwords and %d notes.", len(backup.Passwords), len(backup.Notes)),
+		"Users":   users,
 	})
 }
 
@@ -1289,7 +1589,7 @@ func (s *Server) handleAdminRebuild(w http.ResponseWriter, r *http.Request) {
 	}
 	rebuilt := 0
 	for _, id := range pwIDs {
-		entry, err := s.store.GetPassword(ctx, s.crypto, id)
+		entry, err := s.store.GetPassword(ctx, s.crypto, id, user.ID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1307,7 +1607,7 @@ func (s *Server) handleAdminRebuild(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, id := range noteIDs {
-		note, err := s.store.GetNote(ctx, s.crypto, id)
+		note, err := s.store.GetNote(ctx, s.crypto, id, user.ID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1324,9 +1624,15 @@ func (s *Server) handleAdminRebuild(w http.ResponseWriter, r *http.Request) {
 			rebuilt++
 		}
 	}
+	users, err := s.store.ListUsers(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.renderWithUnlock(w, r, "admin.html", map[string]any{
 		"Title":   "Admin",
 		"Message": fmt.Sprintf("Rebuilt %d items from import_raw.", rebuilt),
+		"Users":   users,
 	})
 }
 
@@ -1535,6 +1841,10 @@ func splitComma(value string) []string {
 		out = append(out, trim)
 	}
 	return out
+}
+
+func urlQueryEscape(value string) string {
+	return url.QueryEscape(value)
 }
 
 func (s *Server) isUnlocked(r *http.Request) bool {

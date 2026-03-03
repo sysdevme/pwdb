@@ -17,15 +17,28 @@
     {{ if .Items }}
       {{ range .Items }}
       <tr>
-        <td>{{ .Title }}</td>
+        <td>
+          {{ .Title }}
+          {{ if .SharedLabel }}
+            <div class="small text-muted">{{ .SharedLabel }}</div>
+          {{ end }}
+        </td>
         <td>{{ .Tags }}</td>
         <td>{{ .Groups }}</td>
         <td>{{ .Updated }}</td>
         <td>
-          <a href="/notes/edit?id={{ .ID }}" class="btn btn-sm btn-outline-secondary">Edit</a>
+          {{ if eq .CanManage "true" }}
+            <a href="/notes/edit?id={{ .ID }}" class="btn btn-sm btn-outline-secondary">Edit</a>
+          {{ else }}
+            <span class="btn btn-sm btn-outline-secondary disabled">Read Only</span>
+          {{ end }}
           {{ if $.Unlocked }}
             <a href="/notes/view?id={{ .ID }}" class="btn btn-sm btn-outline-primary">View</a>
-            <a href="/notes/delete?id={{ .ID }}" class="btn btn-sm btn-outline-danger">Delete</a>
+            {{ if eq .CanManage "true" }}
+              <a href="/notes/delete?id={{ .ID }}" class="btn btn-sm btn-outline-danger">Delete</a>
+            {{ else }}
+              <span class="btn btn-sm btn-outline-danger disabled">Delete</span>
+            {{ end }}
           {{ else }}
             <span class="btn btn-sm btn-outline-primary disabled">View</span>
             <span class="btn btn-sm btn-outline-danger disabled">Delete</span>

@@ -147,17 +147,21 @@ func (s *Store) ListPasswords(ctx context.Context, userID string) ([]models.Pass
 	var items []models.PasswordEntry
 	for rows.Next() {
 		var id uuid.UUID
+		var ownerID uuid.UUID
+		var ownerEmail string
 		var title, username, url, tags, groups string
-		if err := rows.Scan(&id, &title, &username, &url, &tags, &groups); err != nil {
+		if err := rows.Scan(&id, &ownerID, &ownerEmail, &title, &username, &url, &tags, &groups); err != nil {
 			return nil, err
 		}
 		items = append(items, models.PasswordEntry{
-			ID:       id.String(),
-			Title:    title,
-			Username: username,
-			URL:      url,
-			Tags:     splitTags(tags),
-			Groups:   splitTags(groups),
+			ID:         id.String(),
+			UserID:     ownerID.String(),
+			OwnerEmail: ownerEmail,
+			Title:      title,
+			Username:   username,
+			URL:        url,
+			Tags:       splitTags(tags),
+			Groups:     splitTags(groups),
 		})
 	}
 	return items, rows.Err()
@@ -184,21 +188,27 @@ func (s *Store) ListPasswordIDs(ctx context.Context, userID string) ([]string, e
 	return ids, rows.Err()
 }
 
-func (s *Store) GetPassword(ctx context.Context, cryptoSvc *crypto.Service, id string) (models.PasswordEntry, error) {
+func (s *Store) GetPassword(ctx context.Context, cryptoSvc *crypto.Service, id string, userID string) (models.PasswordEntry, error) {
 	uid, err := uuid.Parse(id)
 	if err != nil {
 		return models.PasswordEntry{}, err
 	}
+	viewerID, err := uuid.Parse(userID)
+	if err != nil {
+		return models.PasswordEntry{}, err
+	}
 	var entry models.PasswordEntry
+	var ownerEmail string
 	var passEnc, notesEnc []byte
 	var tags string
 	var groups string
 	var importSource *string
 	var importRaw []byte
-	err = s.pool.QueryRow(ctx, sqlGetPassword, uid).Scan(&entry.ID, &entry.UserID, &entry.Title, &entry.Username, &passEnc, &entry.URL, &notesEnc, &importSource, &importRaw, &tags, &groups)
+	err = s.pool.QueryRow(ctx, sqlGetPassword, uid, viewerID).Scan(&entry.ID, &entry.UserID, &ownerEmail, &entry.Title, &entry.Username, &passEnc, &entry.URL, &notesEnc, &importSource, &importRaw, &tags, &groups)
 	if err != nil {
 		return models.PasswordEntry{}, err
 	}
+	entry.OwnerEmail = ownerEmail
 	password, err := cryptoSvc.Decrypt(passEnc)
 	if err != nil {
 		return models.PasswordEntry{}, err
@@ -362,17 +372,21 @@ func (s *Store) ListNotes(ctx context.Context, userID string) ([]models.SecureNo
 	var items []models.SecureNote
 	for rows.Next() {
 		var id uuid.UUID
+		var ownerID uuid.UUID
+		var ownerEmail string
 		var title, tags, groups string
 		var updated time.Time
-		if err := rows.Scan(&id, &title, &updated, &tags, &groups); err != nil {
+		if err := rows.Scan(&id, &ownerID, &ownerEmail, &title, &updated, &tags, &groups); err != nil {
 			return nil, err
 		}
 		items = append(items, models.SecureNote{
-			ID:        id.String(),
-			Title:     title,
-			Tags:      splitTags(tags),
-			Groups:    splitTags(groups),
-			UpdatedAt: updated,
+			ID:         id.String(),
+			UserID:     ownerID.String(),
+			OwnerEmail: ownerEmail,
+			Title:      title,
+			Tags:       splitTags(tags),
+			Groups:     splitTags(groups),
+			UpdatedAt:  updated,
 		})
 	}
 	return items, rows.Err()
@@ -559,14 +573,18 @@ func (s *Store) CreateUser(ctx context.Context, user models.User) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, sqlCreateUser, id, user.Email, user.PasswordHash, user.MasterPasswordHash, user.IsAdmin)
+	status := strings.TrimSpace(user.Status)
+	if status == "" {
+		status = "pending"
+	}
+	_, err = s.pool.Exec(ctx, sqlCreateUser, id, user.Email, user.PasswordHash, user.MasterPasswordHash, user.IsAdmin, status)
 	return err
 }
 
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (models.User, error) {
 	var user models.User
 	var id uuid.UUID
-	err := s.pool.QueryRow(ctx, sqlGetUserByEmail, email).Scan(&id, &user.Email, &user.PasswordHash, &user.MasterPasswordHash, &user.IsAdmin, &user.CreatedAt)
+	err := s.pool.QueryRow(ctx, sqlGetUserByEmail, email).Scan(&id, &user.Email, &user.Status, &user.PasswordHash, &user.MasterPasswordHash, &user.IsAdmin, &user.CreatedAt)
 	if err != nil {
 		return models.User{}, err
 	}
@@ -581,7 +599,7 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (models.User, error)
 	}
 	var user models.User
 	var userID uuid.UUID
-	err = s.pool.QueryRow(ctx, sqlGetUserByID, uid).Scan(&userID, &user.Email, &user.PasswordHash, &user.MasterPasswordHash, &user.IsAdmin, &user.CreatedAt)
+	err = s.pool.QueryRow(ctx, sqlGetUserByID, uid).Scan(&userID, &user.Email, &user.Status, &user.PasswordHash, &user.MasterPasswordHash, &user.IsAdmin, &user.CreatedAt)
 	if err != nil {
 		return models.User{}, err
 	}
@@ -599,7 +617,30 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 	for rows.Next() {
 		var user models.User
 		var id uuid.UUID
-		if err := rows.Scan(&id, &user.Email, &user.IsAdmin, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&id, &user.Email, &user.Status, &user.IsAdmin, &user.CreatedAt); err != nil {
+			return nil, err
+		}
+		user.ID = id.String()
+		out = append(out, user)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListActiveUsersExcept(ctx context.Context, userID string) ([]models.User, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, sqlListActiveUsersExcept, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.User
+	for rows.Next() {
+		var user models.User
+		var id uuid.UUID
+		if err := rows.Scan(&id, &user.Email, &user.Status, &user.IsAdmin, &user.CreatedAt); err != nil {
 			return nil, err
 		}
 		user.ID = id.String()
@@ -614,6 +655,15 @@ func (s *Store) UpdateUserCredentials(ctx context.Context, userID string, loginH
 		return err
 	}
 	_, err = s.pool.Exec(ctx, sqlUpdateUserCredentials, uid, loginHash, masterHash)
+	return err
+}
+
+func (s *Store) SetUserStatus(ctx context.Context, userID string, status string) error {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, sqlSetUserStatus, uid, strings.TrimSpace(status))
 	return err
 }
 
@@ -680,21 +730,27 @@ func (s *Store) AssignUnownedToUser(ctx context.Context, userID string) error {
 	return nil
 }
 
-func (s *Store) GetNote(ctx context.Context, cryptoSvc *crypto.Service, id string) (models.SecureNote, error) {
+func (s *Store) GetNote(ctx context.Context, cryptoSvc *crypto.Service, id string, userID string) (models.SecureNote, error) {
 	uid, err := uuid.Parse(id)
 	if err != nil {
 		return models.SecureNote{}, err
 	}
+	viewerID, err := uuid.Parse(userID)
+	if err != nil {
+		return models.SecureNote{}, err
+	}
 	var note models.SecureNote
+	var ownerEmail string
 	var bodyEnc []byte
 	var importSource *string
 	var importRaw []byte
 	var tags string
 	var groups string
-	err = s.pool.QueryRow(ctx, sqlGetNote, uid).Scan(&note.ID, &note.UserID, &note.Title, &bodyEnc, &note.CreatedAt, &note.UpdatedAt, &importSource, &importRaw, &tags, &groups)
+	err = s.pool.QueryRow(ctx, sqlGetNote, uid, viewerID).Scan(&note.ID, &note.UserID, &ownerEmail, &note.Title, &bodyEnc, &note.CreatedAt, &note.UpdatedAt, &importSource, &importRaw, &tags, &groups)
 	if err != nil {
 		return models.SecureNote{}, err
 	}
+	note.OwnerEmail = ownerEmail
 	body, err := cryptoSvc.Decrypt(bodyEnc)
 	if err != nil {
 		return models.SecureNote{}, err
@@ -775,6 +831,221 @@ func (s *Store) DeleteNote(ctx context.Context, userID, id string) error {
 	}
 	_, err = s.pool.Exec(ctx, sqlDeleteNote, uid, userUUID)
 	return err
+}
+
+func (s *Store) ListPasswordsByTagName(ctx context.Context, userID, name string) ([]models.PasswordEntry, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, sqlListPasswordsByTagName, uid, strings.TrimSpace(name))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []models.PasswordEntry
+	for rows.Next() {
+		var item models.PasswordEntry
+		var id uuid.UUID
+		var ownerID uuid.UUID
+		if err := rows.Scan(&id, &ownerID, &item.OwnerEmail, &item.Title, &item.Username, &item.URL); err != nil {
+			return nil, err
+		}
+		item.ID = id.String()
+		item.UserID = ownerID.String()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListNotesByTagName(ctx context.Context, userID, name string) ([]models.SecureNote, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, sqlListNotesByTagName, uid, strings.TrimSpace(name))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []models.SecureNote
+	for rows.Next() {
+		var item models.SecureNote
+		var id uuid.UUID
+		var ownerID uuid.UUID
+		if err := rows.Scan(&id, &ownerID, &item.OwnerEmail, &item.Title, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.ID = id.String()
+		item.UserID = ownerID.String()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListPasswordsByGroupName(ctx context.Context, userID, name string) ([]models.PasswordEntry, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, sqlListPasswordsByGroupName, uid, strings.TrimSpace(name))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []models.PasswordEntry
+	for rows.Next() {
+		var item models.PasswordEntry
+		var id uuid.UUID
+		var ownerID uuid.UUID
+		if err := rows.Scan(&id, &ownerID, &item.OwnerEmail, &item.Title, &item.Username, &item.URL); err != nil {
+			return nil, err
+		}
+		item.ID = id.String()
+		item.UserID = ownerID.String()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListNotesByGroupName(ctx context.Context, userID, name string) ([]models.SecureNote, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, sqlListNotesByGroupName, uid, strings.TrimSpace(name))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []models.SecureNote
+	for rows.Next() {
+		var item models.SecureNote
+		var id uuid.UUID
+		var ownerID uuid.UUID
+		if err := rows.Scan(&id, &ownerID, &item.OwnerEmail, &item.Title, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.ID = id.String()
+		item.UserID = ownerID.String()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) SharePasswordWithUser(ctx context.Context, ownerUserID, entryID, targetEmail string) error {
+	ownerID, err := uuid.Parse(ownerUserID)
+	if err != nil {
+		return err
+	}
+	entryUUID, err := uuid.Parse(entryID)
+	if err != nil {
+		return err
+	}
+	owns := false
+	if err := s.pool.QueryRow(ctx, sqlCheckPasswordOwner, entryUUID, ownerID).Scan(&owns); err != nil {
+		return err
+	}
+	if !owns {
+		return errors.New("password not found")
+	}
+	target, err := s.GetActiveUserByEmail(ctx, targetEmail)
+	if err != nil {
+		return errors.New("active user not found")
+	}
+	if target.ID == ownerUserID {
+		return errors.New("cannot share with yourself")
+	}
+	targetID, err := uuid.Parse(target.ID)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, sqlInsertPasswordShare, entryUUID, targetID)
+	return err
+}
+
+func (s *Store) ShareNoteWithUser(ctx context.Context, ownerUserID, noteID, targetEmail string) error {
+	ownerID, err := uuid.Parse(ownerUserID)
+	if err != nil {
+		return err
+	}
+	noteUUID, err := uuid.Parse(noteID)
+	if err != nil {
+		return err
+	}
+	owns := false
+	if err := s.pool.QueryRow(ctx, sqlCheckNoteOwner, noteUUID, ownerID).Scan(&owns); err != nil {
+		return err
+	}
+	if !owns {
+		return errors.New("note not found")
+	}
+	target, err := s.GetActiveUserByEmail(ctx, targetEmail)
+	if err != nil {
+		return errors.New("active user not found")
+	}
+	if target.ID == ownerUserID {
+		return errors.New("cannot share with yourself")
+	}
+	targetID, err := uuid.Parse(target.ID)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, sqlInsertNoteShare, noteUUID, targetID)
+	return err
+}
+
+func (s *Store) ListPasswordShareEmails(ctx context.Context, entryID string) ([]string, error) {
+	uid, err := uuid.Parse(entryID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, sqlListPasswordShareEmails, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var email string
+		if err := rows.Scan(&email); err != nil {
+			return nil, err
+		}
+		out = append(out, email)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListNoteShareEmails(ctx context.Context, noteID string) ([]string, error) {
+	uid, err := uuid.Parse(noteID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, sqlListNoteShareEmails, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var email string
+		if err := rows.Scan(&email); err != nil {
+			return nil, err
+		}
+		out = append(out, email)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetActiveUserByEmail(ctx context.Context, email string) (models.User, error) {
+	var user models.User
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, sqlGetActiveUserByEmail, strings.TrimSpace(email)).Scan(&id, &user.Email, &user.Status, &user.PasswordHash, &user.MasterPasswordHash, &user.IsAdmin, &user.CreatedAt)
+	if err != nil {
+		return models.User{}, err
+	}
+	user.ID = id.String()
+	return user, nil
 }
 
 func parseOrNewUUID(value string) (uuid.UUID, error) {

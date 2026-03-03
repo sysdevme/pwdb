@@ -50,16 +50,18 @@ const (
 	`
 
 	sqlListPasswords = `
-		SELECT p.id, p.title, p.username, p.url,
+		SELECT p.id, p.user_id, owner.email, p.title, p.username, p.url,
 			   COALESCE(string_agg(DISTINCT t.name, ','), '') AS tags,
 			   COALESCE(string_agg(DISTINCT g.name, ','), '') AS groups
 		FROM password_entries p
+		JOIN users owner ON owner.id = p.user_id
+		LEFT JOIN password_entry_shares pes ON pes.entry_id = p.id AND pes.user_id = $1
 		LEFT JOIN entry_tags et ON et.entry_id = p.id
 		LEFT JOIN tags t ON t.id = et.tag_id
 		LEFT JOIN group_entries ge ON ge.entry_id = p.id
 		LEFT JOIN groups g ON g.id = ge.group_id
-		WHERE p.user_id = $1
-		GROUP BY p.id
+		WHERE p.user_id = $1 OR pes.user_id = $1
+		GROUP BY p.id, owner.email
 		ORDER BY p.updated_at DESC
 	`
 
@@ -68,17 +70,19 @@ const (
 	`
 
 	sqlGetPassword = `
-		SELECT p.id, p.user_id, p.title, p.username, p.password_enc, p.url, p.notes_enc,
+		SELECT p.id, p.user_id, owner.email, p.title, p.username, p.password_enc, p.url, p.notes_enc,
 			   p.import_source, p.import_raw,
 			   COALESCE(string_agg(DISTINCT t.name, ','), '') AS tags,
 			   COALESCE(string_agg(DISTINCT g.name, ','), '') AS groups
 		FROM password_entries p
+		JOIN users owner ON owner.id = p.user_id
+		LEFT JOIN password_entry_shares pes ON pes.entry_id = p.id AND pes.user_id = $2
 		LEFT JOIN entry_tags et ON et.entry_id = p.id
 		LEFT JOIN tags t ON t.id = et.tag_id
 		LEFT JOIN group_entries ge ON ge.entry_id = p.id
 		LEFT JOIN groups g ON g.id = ge.group_id
-		WHERE p.id = $1
-		GROUP BY p.id
+		WHERE p.id = $1 AND (p.user_id = $2 OR pes.user_id = $2)
+		GROUP BY p.id, owner.email
 	`
 
 	sqlUpdatePassword = `
@@ -112,16 +116,18 @@ const (
 	`
 
 	sqlListNotes = `
-		SELECT n.id, n.title, n.updated_at,
+		SELECT n.id, n.user_id, owner.email, n.title, n.updated_at,
 			   COALESCE(string_agg(DISTINCT t.name, ','), '') AS tags,
 			   COALESCE(string_agg(DISTINCT g.name, ','), '') AS groups
 		FROM secure_notes n
+		JOIN users owner ON owner.id = n.user_id
+		LEFT JOIN secure_note_shares sns ON sns.note_id = n.id AND sns.user_id = $1
 		LEFT JOIN note_tags nt ON nt.note_id = n.id
 		LEFT JOIN tags t ON t.id = nt.tag_id
 		LEFT JOIN note_group_entries nge ON nge.note_id = n.id
 		LEFT JOIN groups g ON g.id = nge.group_id
-		WHERE n.user_id = $1
-		GROUP BY n.id
+		WHERE n.user_id = $1 OR sns.user_id = $1
+		GROUP BY n.id, owner.email
 		ORDER BY n.updated_at DESC
 	`
 
@@ -188,32 +194,51 @@ const (
 	`
 
 	sqlCreateUser = `
-		INSERT INTO users (id, email, password_hash, master_password_hash, is_admin)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO users (id, email, password_hash, master_password_hash, is_admin, status)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`
 
 	sqlGetUserByEmail = `
-		SELECT id, email, password_hash, master_password_hash, is_admin, created_at
+		SELECT id, email, status, password_hash, master_password_hash, is_admin, created_at
 		FROM users
 		WHERE email = $1
 	`
 
 	sqlGetUserByID = `
-		SELECT id, email, password_hash, master_password_hash, is_admin, created_at
+		SELECT id, email, status, password_hash, master_password_hash, is_admin, created_at
 		FROM users
 		WHERE id = $1
 	`
 
 	sqlListUsers = `
-		SELECT id, email, is_admin, created_at
+		SELECT id, email, status, is_admin, created_at
 		FROM users
 		ORDER BY created_at ASC
+	`
+
+	sqlListActiveUsersExcept = `
+		SELECT id, email, status, is_admin, created_at
+		FROM users
+		WHERE status = 'active' AND id <> $1
+		ORDER BY email ASC
+	`
+
+	sqlGetActiveUserByEmail = `
+		SELECT id, email, status, password_hash, master_password_hash, is_admin, created_at
+		FROM users
+		WHERE email = $1 AND status = 'active'
 	`
 
 	sqlUpdateUserCredentials = `
 		UPDATE users
 		SET password_hash = COALESCE($2, password_hash),
 		    master_password_hash = COALESCE($3, master_password_hash)
+		WHERE id = $1
+	`
+
+	sqlSetUserStatus = `
+		UPDATE users
+		SET status = $2
 		WHERE id = $1
 	`
 
@@ -249,16 +274,18 @@ const (
 	`
 
 	sqlGetNote = `
-		SELECT n.id, n.user_id, n.title, n.body_enc, n.created_at, n.updated_at, n.import_source, n.import_raw,
+		SELECT n.id, n.user_id, owner.email, n.title, n.body_enc, n.created_at, n.updated_at, n.import_source, n.import_raw,
 			   COALESCE(string_agg(DISTINCT t.name, ','), '') AS tags,
 			   COALESCE(string_agg(DISTINCT g.name, ','), '') AS groups
 		FROM secure_notes n
+		JOIN users owner ON owner.id = n.user_id
+		LEFT JOIN secure_note_shares sns ON sns.note_id = n.id AND sns.user_id = $2
 		LEFT JOIN note_tags nt ON nt.note_id = n.id
 		LEFT JOIN tags t ON t.id = nt.tag_id
 		LEFT JOIN note_group_entries nge ON nge.note_id = n.id
 		LEFT JOIN groups g ON g.id = nge.group_id
-		WHERE n.id = $1
-		GROUP BY n.id
+		WHERE n.id = $1 AND (n.user_id = $2 OR sns.user_id = $2)
+		GROUP BY n.id, owner.email
 	`
 
 	sqlUpdateNote = `
@@ -305,5 +332,81 @@ const (
 
 	sqlEnsureGroupSelect = `
 		SELECT id FROM groups WHERE name = $1 AND user_id = $2
+	`
+
+	sqlListPasswordsByTagName = `
+		SELECT p.id, p.user_id, owner.email, p.title, p.username, p.url
+		FROM password_entries p
+		JOIN users owner ON owner.id = p.user_id
+		JOIN entry_tags et ON et.entry_id = p.id
+		JOIN tags t ON t.id = et.tag_id
+		WHERE p.user_id = $1 AND t.user_id = $1 AND t.name = $2
+		ORDER BY p.updated_at DESC
+	`
+
+	sqlListNotesByTagName = `
+		SELECT n.id, n.user_id, owner.email, n.title, n.updated_at
+		FROM secure_notes n
+		JOIN users owner ON owner.id = n.user_id
+		JOIN note_tags nt ON nt.note_id = n.id
+		JOIN tags t ON t.id = nt.tag_id
+		WHERE n.user_id = $1 AND t.user_id = $1 AND t.name = $2
+		ORDER BY n.updated_at DESC
+	`
+
+	sqlListPasswordsByGroupName = `
+		SELECT p.id, p.user_id, owner.email, p.title, p.username, p.url
+		FROM password_entries p
+		JOIN users owner ON owner.id = p.user_id
+		JOIN group_entries ge ON ge.entry_id = p.id
+		JOIN groups g ON g.id = ge.group_id
+		WHERE p.user_id = $1 AND g.user_id = $1 AND g.name = $2
+		ORDER BY p.updated_at DESC
+	`
+
+	sqlListNotesByGroupName = `
+		SELECT n.id, n.user_id, owner.email, n.title, n.updated_at
+		FROM secure_notes n
+		JOIN users owner ON owner.id = n.user_id
+		JOIN note_group_entries nge ON nge.note_id = n.id
+		JOIN groups g ON g.id = nge.group_id
+		WHERE n.user_id = $1 AND g.user_id = $1 AND g.name = $2
+		ORDER BY n.updated_at DESC
+	`
+
+	sqlCheckPasswordOwner = `
+		SELECT EXISTS(SELECT 1 FROM password_entries WHERE id = $1 AND user_id = $2)
+	`
+
+	sqlCheckNoteOwner = `
+		SELECT EXISTS(SELECT 1 FROM secure_notes WHERE id = $1 AND user_id = $2)
+	`
+
+	sqlInsertPasswordShare = `
+		INSERT INTO password_entry_shares (entry_id, user_id)
+		VALUES ($1, $2)
+		ON CONFLICT DO NOTHING
+	`
+
+	sqlInsertNoteShare = `
+		INSERT INTO secure_note_shares (note_id, user_id)
+		VALUES ($1, $2)
+		ON CONFLICT DO NOTHING
+	`
+
+	sqlListPasswordShareEmails = `
+		SELECT u.email
+		FROM password_entry_shares pes
+		JOIN users u ON u.id = pes.user_id
+		WHERE pes.entry_id = $1
+		ORDER BY u.email ASC
+	`
+
+	sqlListNoteShareEmails = `
+		SELECT u.email
+		FROM secure_note_shares sns
+		JOIN users u ON u.id = sns.user_id
+		WHERE sns.note_id = $1
+		ORDER BY u.email ASC
 	`
 )
