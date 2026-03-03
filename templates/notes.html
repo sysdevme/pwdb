@@ -7,6 +7,8 @@
   <thead>
     <tr>
       <th>Title</th>
+      <th>Tags</th>
+      <th>Groups</th>
       <th>Updated</th>
       <th>Actions</th>
     </tr>
@@ -16,7 +18,9 @@
       {{ range .Items }}
       <tr>
         <td>{{ .Title }}</td>
-        <td>{{ .UpdatedAt }}</td>
+        <td>{{ .Tags }}</td>
+        <td>{{ .Groups }}</td>
+        <td>{{ .Updated }}</td>
         <td>
           <a href="/notes/edit?id={{ .ID }}" class="btn btn-sm btn-outline-secondary">Edit</a>
           {{ if $.Unlocked }}
@@ -30,7 +34,7 @@
       </tr>
       {{ end }}
     {{ else }}
-      <tr><td colspan="3" class="text-muted">No notes</td></tr>
+      <tr><td colspan="5" class="text-muted">No notes</td></tr>
     {{ end }}
   </tbody>
 </table>

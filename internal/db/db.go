@@ -314,12 +314,39 @@ func (s *Store) InsertSecureNote(ctx context.Context, cryptoSvc *crypto.Service,
 	if err != nil {
 		return err
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
 	createdAt := nullTime(note.CreatedAt)
 	updatedAt := nullTime(note.UpdatedAt)
 	importSource := nullIfEmpty(note.ImportSource)
 	importRaw := nullIfEmpty(note.ImportRaw)
-	_, err = s.pool.Exec(ctx, sqlUpsertSecureNote, id, userID, note.Title, bodyEnc, importSource, importRaw, createdAt, updatedAt)
-	return err
+	_, err = tx.Exec(ctx, sqlUpsertSecureNote, id, userID, note.Title, bodyEnc, importSource, importRaw, createdAt, updatedAt)
+	if err != nil {
+		return err
+	}
+	for _, tagName := range normalizeTags(note.Tags) {
+		tagID, err := ensureTag(ctx, tx, userID, tagName)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, sqlInsertNoteTag, id, tagID); err != nil {
+			return err
+		}
+	}
+	for _, groupName := range normalizeTags(note.Groups) {
+		groupID, err := ensureGroup(ctx, tx, userID, groupName)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, sqlInsertNoteGroupEntry, groupID, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) ListNotes(ctx context.Context, userID string) ([]models.SecureNote, error) {
@@ -335,14 +362,16 @@ func (s *Store) ListNotes(ctx context.Context, userID string) ([]models.SecureNo
 	var items []models.SecureNote
 	for rows.Next() {
 		var id uuid.UUID
-		var title string
+		var title, tags, groups string
 		var updated time.Time
-		if err := rows.Scan(&id, &title, &updated); err != nil {
+		if err := rows.Scan(&id, &title, &updated, &tags, &groups); err != nil {
 			return nil, err
 		}
 		items = append(items, models.SecureNote{
 			ID:        id.String(),
 			Title:     title,
+			Tags:      splitTags(tags),
+			Groups:    splitTags(groups),
 			UpdatedAt: updated,
 		})
 	}
@@ -658,7 +687,11 @@ func (s *Store) GetNote(ctx context.Context, cryptoSvc *crypto.Service, id strin
 	}
 	var note models.SecureNote
 	var bodyEnc []byte
-	err = s.pool.QueryRow(ctx, sqlGetNote, uid).Scan(&note.ID, &note.UserID, &note.Title, &bodyEnc, &note.CreatedAt, &note.UpdatedAt, &note.ImportSource, &note.ImportRaw)
+	var importSource *string
+	var importRaw []byte
+	var tags string
+	var groups string
+	err = s.pool.QueryRow(ctx, sqlGetNote, uid).Scan(&note.ID, &note.UserID, &note.Title, &bodyEnc, &note.CreatedAt, &note.UpdatedAt, &importSource, &importRaw, &tags, &groups)
 	if err != nil {
 		return models.SecureNote{}, err
 	}
@@ -667,6 +700,14 @@ func (s *Store) GetNote(ctx context.Context, cryptoSvc *crypto.Service, id strin
 		return models.SecureNote{}, err
 	}
 	note.Body = body
+	note.Tags = splitTags(tags)
+	note.Groups = splitTags(groups)
+	if importSource != nil {
+		note.ImportSource = *importSource
+	}
+	if len(importRaw) > 0 {
+		note.ImportRaw = string(importRaw)
+	}
 	return note, nil
 }
 
@@ -686,8 +727,41 @@ func (s *Store) UpdateNote(ctx context.Context, cryptoSvc *crypto.Service, note 
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, sqlUpdateNote, uid, note.Title, bodyEnc, userID)
-	return err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, sqlUpdateNote, uid, note.Title, bodyEnc, userID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, sqlDeleteNoteTagsByNoteID, uid); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, sqlDeleteNoteGroupEntriesByNoteID, uid); err != nil {
+		return err
+	}
+	for _, tagName := range normalizeTags(note.Tags) {
+		tagID, err := ensureTag(ctx, tx, userID, tagName)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, sqlInsertNoteTag, uid, tagID); err != nil {
+			return err
+		}
+	}
+	for _, groupName := range normalizeTags(note.Groups) {
+		groupID, err := ensureGroup(ctx, tx, userID, groupName)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, sqlInsertNoteGroupEntry, groupID, uid); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) DeleteNote(ctx context.Context, userID, id string) error {

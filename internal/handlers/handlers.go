@@ -27,9 +27,9 @@ const userCtxKey ctxKey = 1
 
 type Server struct {
 	templateDir string
-	store     *db.Store
-	crypto    *crypto.Service
-	unlock    *unlockManager
+	store       *db.Store
+	crypto      *crypto.Service
+	unlock      *unlockManager
 }
 
 func isSecureRequest(r *http.Request) bool {
@@ -225,11 +225,11 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		}
 		adminID := uuid.New().String()
 		if err := s.store.CreateUser(r.Context(), models.User{
-			ID:           adminID,
-			Email:        email,
-			PasswordHash: loginHash,
+			ID:                 adminID,
+			Email:              email,
+			PasswordHash:       loginHash,
 			MasterPasswordHash: masterHash,
-			IsAdmin:      true,
+			IsAdmin:            true,
 		}); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -529,18 +529,55 @@ func (s *Server) handleNotes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	var viewItems []map[string]string
+	for _, item := range items {
+		viewItems = append(viewItems, map[string]string{
+			"ID":      item.ID,
+			"Title":   item.Title,
+			"Updated": item.UpdatedAt.Format(time.RFC3339),
+			"Tags":    strings.Join(item.Tags, ", "),
+			"Groups":  strings.Join(item.Groups, ", "),
+		})
+	}
 	s.renderWithUnlock(w, r, "notes.html", map[string]any{
 		"Title": "Secure Notes",
-		"Items": items,
+		"Items": viewItems,
 	})
 }
 
 func (s *Server) handleNoteForm(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		user, ok := s.currentUser(r)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		tags, err := s.store.ListTags(r.Context(), user.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		groups, err := s.store.ListGroups(r.Context(), user.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var tagNames []string
+		for _, tag := range tags {
+			tagNames = append(tagNames, tag.Name)
+		}
+		var groupNames []string
+		for _, group := range groups {
+			groupNames = append(groupNames, group.Name)
+		}
 		s.renderWithUnlock(w, r, "note_form.html", map[string]any{
-			"Title": "New Note",
-			"Item":  models.SecureNote{},
+			"Title":      "New Note",
+			"Item":       models.SecureNote{},
+			"TagsText":   "",
+			"GroupsText": "",
+			"TagsList":   tagNames,
+			"GroupsList": groupNames,
 		})
 	case http.MethodPost:
 		if err := r.ParseForm(); err != nil {
@@ -554,8 +591,10 @@ func (s *Server) handleNoteForm(w http.ResponseWriter, r *http.Request) {
 		}
 		note := models.SecureNote{
 			UserID: user.ID,
-			Title: strings.TrimSpace(r.FormValue("title")),
-			Body:  strings.TrimSpace(r.FormValue("body")),
+			Title:  strings.TrimSpace(r.FormValue("title")),
+			Body:   strings.TrimSpace(r.FormValue("body")),
+			Tags:   splitComma(r.FormValue("tags")),
+			Groups: splitComma(r.FormValue("groups")),
 		}
 		if err := s.store.InsertSecureNote(r.Context(), s.crypto, note); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -589,9 +628,31 @@ func (s *Server) handleNoteEdit(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		tags, err := s.store.ListTags(r.Context(), user.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		groups, err := s.store.ListGroups(r.Context(), user.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var tagNames []string
+		for _, tag := range tags {
+			tagNames = append(tagNames, tag.Name)
+		}
+		var groupNames []string
+		for _, group := range groups {
+			groupNames = append(groupNames, group.Name)
+		}
 		s.renderWithUnlock(w, r, "note_form.html", map[string]any{
-			"Title": "Edit Note",
-			"Item":  note,
+			"Title":      "Edit Note",
+			"Item":       note,
+			"TagsText":   strings.Join(note.Tags, ", "),
+			"GroupsText": strings.Join(note.Groups, ", "),
+			"TagsList":   tagNames,
+			"GroupsList": groupNames,
 		})
 	case http.MethodPost:
 		if !s.isUnlocked(r) {
@@ -608,10 +669,12 @@ func (s *Server) handleNoteEdit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		note := models.SecureNote{
-			ID:    r.FormValue("id"),
+			ID:     r.FormValue("id"),
 			UserID: user.ID,
-			Title: strings.TrimSpace(r.FormValue("title")),
-			Body:  strings.TrimSpace(r.FormValue("body")),
+			Title:  strings.TrimSpace(r.FormValue("title")),
+			Body:   strings.TrimSpace(r.FormValue("body")),
+			Tags:   splitComma(r.FormValue("tags")),
+			Groups: splitComma(r.FormValue("groups")),
 		}
 		if err := s.store.UpdateNote(r.Context(), s.crypto, note); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -691,9 +754,11 @@ func (s *Server) handleNoteView(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data := map[string]any{
-			"Title":    "View Secure Note",
-			"ItemID":   note.ID,
-			"ItemName": note.Title,
+			"Title":      "View Secure Note",
+			"ItemID":     note.ID,
+			"ItemName":   note.Title,
+			"TagsText":   strings.Join(note.Tags, ", "),
+			"GroupsText": strings.Join(note.Groups, ", "),
 		}
 		if s.isUnlocked(r) {
 			data["Body"] = note.Body
@@ -724,10 +789,12 @@ func (s *Server) handleNoteView(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.renderWithUnlock(w, r, "note_view.html", map[string]any{
-			"Title":    "View Secure Note",
-			"ItemID":   note.ID,
-			"ItemName": note.Title,
-			"Body":     note.Body,
+			"Title":      "View Secure Note",
+			"ItemID":     note.ID,
+			"ItemName":   note.Title,
+			"Body":       note.Body,
+			"TagsText":   strings.Join(note.Tags, ", "),
+			"GroupsText": strings.Join(note.Groups, ", "),
 		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -753,16 +820,16 @@ func (s *Server) handlePasswordView(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data := map[string]any{
-			"Title":    "View Password",
-			"ItemID":   entry.ID,
-			"ItemName": entry.Title,
-			"Username": entry.Username,
-			"URL":      entry.URL,
-			"Notes":    entry.Notes,
-			"TagsText": strings.Join(entry.Tags, ", "),
-			"GroupsText": strings.Join(entry.Groups, ", "),
+			"Title":        "View Password",
+			"ItemID":       entry.ID,
+			"ItemName":     entry.Title,
+			"Username":     entry.Username,
+			"URL":          entry.URL,
+			"Notes":        entry.Notes,
+			"TagsText":     strings.Join(entry.Tags, ", "),
+			"GroupsText":   strings.Join(entry.Groups, ", "),
 			"ImportSource": entry.ImportSource,
-			"ImportRaw": entry.ImportRaw,
+			"ImportRaw":    entry.ImportRaw,
 			"ImportRawB64": base64.StdEncoding.EncodeToString([]byte(entry.ImportRaw)),
 		}
 		if s.isUnlocked(r) {
@@ -794,24 +861,23 @@ func (s *Server) handlePasswordView(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.renderWithUnlock(w, r, "password_view.html", map[string]any{
-			"Title":    "View Password",
-			"ItemID":   entry.ID,
-			"ItemName": entry.Title,
-			"Username": entry.Username,
-			"URL":      entry.URL,
-			"Notes":    entry.Notes,
-			"TagsText": strings.Join(entry.Tags, ", "),
-			"GroupsText": strings.Join(entry.Groups, ", "),
-			"Password": entry.Password,
+			"Title":        "View Password",
+			"ItemID":       entry.ID,
+			"ItemName":     entry.Title,
+			"Username":     entry.Username,
+			"URL":          entry.URL,
+			"Notes":        entry.Notes,
+			"TagsText":     strings.Join(entry.Tags, ", "),
+			"GroupsText":   strings.Join(entry.Groups, ", "),
+			"Password":     entry.Password,
 			"ImportSource": entry.ImportSource,
-			"ImportRaw": entry.ImportRaw,
+			"ImportRaw":    entry.ImportRaw,
 			"ImportRawB64": base64.StdEncoding.EncodeToString([]byte(entry.ImportRaw)),
 		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
-
 
 func (s *Server) handleBiometricUnlock(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -864,7 +930,6 @@ func (s *Server) handleBiometricUnlock(w http.ResponseWriter, r *http.Request) {
 	})
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }
-
 
 func (s *Server) handleBiometricToken(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -940,10 +1005,10 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 }
 
 type adminBackup struct {
-	Version   int       `json:"version"`
-	CreatedAt time.Time `json:"created_at"`
+	Version   int                    `json:"version"`
+	CreatedAt time.Time              `json:"created_at"`
 	Passwords []models.PasswordEntry `json:"passwords"`
-	Notes     []models.SecureNote `json:"notes"`
+	Notes     []models.SecureNote    `json:"notes"`
 }
 
 func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
@@ -1007,10 +1072,10 @@ func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.CreateUser(r.Context(), models.User{
-		Email:        email,
-		PasswordHash: loginHash,
+		Email:              email,
+		PasswordHash:       loginHash,
 		MasterPasswordHash: masterHash,
-		IsAdmin:      false,
+		IsAdmin:            false,
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1023,7 +1088,7 @@ func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	s.renderWithUnlock(w, r, "admin.html", map[string]any{
 		"Title":   "Admin",
 		"Message": "User created.",
-		"Users": users,
+		"Users":   users,
 	})
 }
 
@@ -1082,7 +1147,7 @@ func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	s.renderWithUnlock(w, r, "admin.html", map[string]any{
 		"Title":   "Admin",
 		"Message": "User updated.",
-		"Users": users,
+		"Users":   users,
 	})
 }
 
@@ -1274,7 +1339,7 @@ func (s *Server) handleImport1Password(w http.ResponseWriter, r *http.Request) {
 		}
 		history, _ := s.store.ListImportRuns(r.Context(), user.ID, 20)
 		s.renderWithUnlock(w, r, "import.html", map[string]any{
-			"Title": "Import from 1Password (.1pif)",
+			"Title":   "Import from 1Password (.1pif)",
 			"History": history,
 		})
 		return
@@ -1497,19 +1562,19 @@ func (s *Server) unlockRemainingSeconds(r *http.Request) int {
 }
 
 type unlockManager struct {
-	mu     sync.Mutex
-	tokens map[string]unlockToken
+	mu      sync.Mutex
+	tokens  map[string]unlockToken
 	preauth map[string]time.Time
 }
 
 type unlockToken struct {
-	UserID string
+	UserID    string
 	ExpiresAt time.Time
 }
 
 func newUnlockManager() *unlockManager {
 	return &unlockManager{
-		tokens: make(map[string]unlockToken),
+		tokens:  make(map[string]unlockToken),
 		preauth: make(map[string]time.Time),
 	}
 }
@@ -1522,7 +1587,7 @@ func (u *unlockManager) Issue(userID string, ttl time.Duration) (string, error) 
 		return "", err
 	}
 	u.tokens[token] = unlockToken{
-		UserID: userID,
+		UserID:    userID,
 		ExpiresAt: time.Now().Add(ttl),
 	}
 	return token, nil

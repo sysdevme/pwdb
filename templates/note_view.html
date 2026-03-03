@@ -4,6 +4,18 @@
   <label class="form-label">Title</label>
   <input class="form-control" value="{{ .ItemName }}" disabled>
 </div>
+{{ if .TagsText }}
+  <div class="mb-3">
+    <label class="form-label">Tags</label>
+    <input class="form-control pm-copy" value="{{ .TagsText }}" readonly>
+  </div>
+{{ end }}
+{{ if .GroupsText }}
+  <div class="mb-3">
+    <label class="form-label">Groups</label>
+    <input class="form-control pm-copy" value="{{ .GroupsText }}" readonly>
+  </div>
+{{ end }}
 {{ if .Body }}
   <div class="mb-3">
     <label class="form-label">Body</label>

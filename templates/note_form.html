@@ -12,7 +12,70 @@
     <label class="form-label">Body</label>
     <textarea name="body" class="form-control" rows="8" required>{{ .Item.Body }}</textarea>
   </div>
+  <div class="mb-3">
+    <label class="form-label">Tags</label>
+    <div class="row g-2">
+      <div class="col-md-6">
+        <select id="tagsSelect" class="form-select">
+          <option value="">Select tag</option>
+          {{ range .TagsList }}
+            <option value="{{ . }}">{{ . }}</option>
+          {{ end }}
+        </select>
+      </div>
+      <div class="col-md-6">
+        <input name="tags" id="tagsInput" class="form-control" placeholder="Custom or comma separated" value="{{ .TagsText }}">
+      </div>
+    </div>
+    <div class="form-text">Choose existing or type custom tags (comma separated).</div>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Groups</label>
+    <div class="row g-2">
+      <div class="col-md-6">
+        <select id="groupsSelect" class="form-select">
+          <option value="">Select group</option>
+          {{ range .GroupsList }}
+            <option value="{{ . }}">{{ . }}</option>
+          {{ end }}
+        </select>
+      </div>
+      <div class="col-md-6">
+        <input name="groups" id="groupsInput" class="form-control" placeholder="Custom or comma separated" value="{{ .GroupsText }}">
+      </div>
+    </div>
+    <div class="form-text">Choose existing or type custom groups (comma separated).</div>
+  </div>
   <button class="btn btn-primary" type="submit">Save</button>
   <a class="btn btn-outline-secondary" href="/notes">Cancel</a>
 </form>
+<script>
+  function addSelected(selectId, inputId) {
+    const select = document.getElementById(selectId);
+    const input = document.getElementById(inputId);
+    if (!select || !input) return;
+    const value = (select.value || "").trim();
+    if (!value) return;
+    const parts = input.value
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (!parts.includes(value)) {
+      parts.push(value);
+    }
+    input.value = parts.join(", ");
+    select.value = "";
+  }
+
+  (function () {
+    const tagsSelect = document.getElementById("tagsSelect");
+    const groupsSelect = document.getElementById("groupsSelect");
+    if (tagsSelect) {
+      tagsSelect.addEventListener("change", () => addSelected("tagsSelect", "tagsInput"));
+    }
+    if (groupsSelect) {
+      groupsSelect.addEventListener("change", () => addSelected("groupsSelect", "groupsInput"));
+    }
+  })();
+</script>
 {{ end }}

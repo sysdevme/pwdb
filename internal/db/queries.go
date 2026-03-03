@@ -31,8 +31,20 @@ const (
 		ON CONFLICT DO NOTHING
 	`
 
+	sqlInsertNoteTag = `
+		INSERT INTO note_tags (note_id, tag_id)
+		VALUES ($1, $2)
+		ON CONFLICT DO NOTHING
+	`
+
 	sqlInsertGroupEntry = `
 		INSERT INTO group_entries (group_id, entry_id)
+		VALUES ($1, $2)
+		ON CONFLICT DO NOTHING
+	`
+
+	sqlInsertNoteGroupEntry = `
+		INSERT INTO note_group_entries (group_id, note_id)
 		VALUES ($1, $2)
 		ON CONFLICT DO NOTHING
 	`
@@ -100,27 +112,42 @@ const (
 	`
 
 	sqlListNotes = `
-		SELECT id, title, updated_at
-		FROM secure_notes
-		WHERE user_id = $1
-		ORDER BY updated_at DESC
+		SELECT n.id, n.title, n.updated_at,
+			   COALESCE(string_agg(DISTINCT t.name, ','), '') AS tags,
+			   COALESCE(string_agg(DISTINCT g.name, ','), '') AS groups
+		FROM secure_notes n
+		LEFT JOIN note_tags nt ON nt.note_id = n.id
+		LEFT JOIN tags t ON t.id = nt.tag_id
+		LEFT JOIN note_group_entries nge ON nge.note_id = n.id
+		LEFT JOIN groups g ON g.id = nge.group_id
+		WHERE n.user_id = $1
+		GROUP BY n.id
+		ORDER BY n.updated_at DESC
 	`
 
 	sqlListTags = `
-		SELECT t.id, t.name, COUNT(et.entry_id) AS count
+		SELECT
+			t.id,
+			t.name,
+			(
+				(SELECT COUNT(*) FROM entry_tags et WHERE et.tag_id = t.id) +
+				(SELECT COUNT(*) FROM note_tags nt WHERE nt.tag_id = t.id)
+			) AS count
 		FROM tags t
-		LEFT JOIN entry_tags et ON et.tag_id = t.id
 		WHERE t.user_id = $1
-		GROUP BY t.id
 		ORDER BY t.name
 	`
 
 	sqlListGroups = `
-		SELECT g.id, g.name, COUNT(ge.entry_id) AS count
+		SELECT
+			g.id,
+			g.name,
+			(
+				(SELECT COUNT(*) FROM group_entries ge WHERE ge.group_id = g.id) +
+				(SELECT COUNT(*) FROM note_group_entries nge WHERE nge.group_id = g.id)
+			) AS count
 		FROM groups g
-		LEFT JOIN group_entries ge ON ge.group_id = g.id
 		WHERE g.user_id = $1
-		GROUP BY g.id
 		ORDER BY g.name
 	`
 
@@ -222,15 +249,30 @@ const (
 	`
 
 	sqlGetNote = `
-		SELECT id, user_id, title, body_enc, created_at, updated_at, import_source, import_raw
-		FROM secure_notes
-		WHERE id = $1
+		SELECT n.id, n.user_id, n.title, n.body_enc, n.created_at, n.updated_at, n.import_source, n.import_raw,
+			   COALESCE(string_agg(DISTINCT t.name, ','), '') AS tags,
+			   COALESCE(string_agg(DISTINCT g.name, ','), '') AS groups
+		FROM secure_notes n
+		LEFT JOIN note_tags nt ON nt.note_id = n.id
+		LEFT JOIN tags t ON t.id = nt.tag_id
+		LEFT JOIN note_group_entries nge ON nge.note_id = n.id
+		LEFT JOIN groups g ON g.id = nge.group_id
+		WHERE n.id = $1
+		GROUP BY n.id
 	`
 
 	sqlUpdateNote = `
 		UPDATE secure_notes
 		SET title = $2, body_enc = $3, updated_at = NOW()
 		WHERE id = $1 AND user_id = $4
+	`
+
+	sqlDeleteNoteTagsByNoteID = `
+		DELETE FROM note_tags WHERE note_id = $1
+	`
+
+	sqlDeleteNoteGroupEntriesByNoteID = `
+		DELETE FROM note_group_entries WHERE note_id = $1
 	`
 
 	sqlDeleteNote = `

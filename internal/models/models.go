@@ -3,30 +3,32 @@ package models
 import "time"
 
 type PasswordEntry struct {
-	ID        string
-	UserID    string
-	Title     string
-	Username  string
-	Password  string
-	URL       string
-	Notes     string
-	Tags      []string
-	Groups    []string
+	ID           string
+	UserID       string
+	Title        string
+	Username     string
+	Password     string
+	URL          string
+	Notes        string
+	Tags         []string
+	Groups       []string
 	ImportSource string
 	ImportRaw    string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type SecureNote struct {
-	ID        string
-	UserID    string
-	Title     string
-	Body      string
+	ID           string
+	UserID       string
+	Title        string
+	Body         string
+	Tags         []string
+	Groups       []string
 	ImportSource string
 	ImportRaw    string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type ImportRun struct {
@@ -43,38 +45,38 @@ type ImportRun struct {
 }
 
 type ImportIssue struct {
-	ID          string
-	ImportRunID string
-	Source      string
-	TypeName    string
-	Title       string
+	ID           string
+	ImportRunID  string
+	Source       string
+	TypeName     string
+	Title        string
 	ExternalUUID string
-	Reason      string
-	Raw         string
-	CreatedAt   time.Time
+	Reason       string
+	Raw          string
+	CreatedAt    time.Time
 }
 
 type Tag struct {
-	ID   string
-	Name string
+	ID     string
+	Name   string
 	UserID string
-	Count int
+	Count  int
 }
 
 type Group struct {
-	ID   string
-	Name string
+	ID     string
+	Name   string
 	UserID string
-	Count int
+	Count  int
 }
 
 type User struct {
-	ID           string
-	Email        string
-	PasswordHash string
+	ID                 string
+	Email              string
+	PasswordHash       string
 	MasterPasswordHash string
-	IsAdmin      bool
-	CreatedAt    time.Time
+	IsAdmin            bool
+	CreatedAt          time.Time
 }
 
 type Session struct {
