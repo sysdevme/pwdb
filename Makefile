@@ -1,7 +1,7 @@
 .PHONY: build run docker-up docker-down docker-build test macos-helper restart restart-helper restart-all
 
 DOCKER_COMPOSE ?= $(shell if command -v docker-compose >/dev/null 2>&1; then echo docker-compose; else echo "docker compose"; fi)
-COMPOSE_FILE ?= docker-compose-env.yml
+COMPOSE_FILE ?= docker-compose.yml
 
 build:
 	go build -o bin/server ./cmd/server
