@@ -1,0 +1,57 @@
+{{ define "content" }}
+<div class="row g-4">
+  <div class="col-12">
+    <div class="p-4 border rounded bg-light">
+      <h1 class="h3 mb-2">Dashboard</h1>
+      <p class="mb-0">Overview of passwords, secure notes, and recent activity.</p>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Passwords</h5>
+        <p class="card-text">{{ .Stats.Passwords }} items</p>
+        <a href="/passwords" class="btn btn-primary">View</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Secure Notes</h5>
+        <p class="card-text">{{ .Stats.Notes }} items</p>
+        <a href="/notes" class="btn btn-primary">View</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Groups</h5>
+        <p class="card-text">{{ .Stats.Groups }} items</p>
+        <a href="/groups" class="btn btn-primary">View</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Tags</h5>
+        <p class="card-text">{{ .Stats.Tags }} items</p>
+        <a href="/tags" class="btn btn-primary">View</a>
+      </div>
+    </div>
+  </div>
+  {{ if .IsAdmin }}
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Import Issues</h5>
+        <p class="card-text">{{ .Stats.ImportIssues }} items</p>
+        <a href="/import/issues" class="btn btn-primary">Review</a>
+      </div>
+    </div>
+  </div>
+  {{ end }}
+</div>
+{{ end }}

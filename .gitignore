@@ -1,0 +1,6 @@
+.env
+bin/
+
+#tools for maintains
+/scripts/
+

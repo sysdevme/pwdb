@@ -1,0 +1,29 @@
+{{ define "content" }}
+<h1 class="h3 mb-3">Import Issues</h1>
+{{ if .Issues }}
+<table class="table table-striped">
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>Type</th>
+      <th>Title</th>
+      <th>UUID</th>
+      <th>Reason</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{ range .Issues }}
+    <tr>
+      <td>{{ .CreatedAt }}</td>
+      <td>{{ .TypeName }}</td>
+      <td>{{ .Title }}</td>
+      <td>{{ .ExternalUUID }}</td>
+      <td>{{ .Reason }}</td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ else }}
+<div class="alert alert-success">No import issues.</div>
+{{ end }}
+{{ end }}

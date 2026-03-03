@@ -1,0 +1,18 @@
+{{ define "content" }}
+<h1 class="h3 mb-3">Create Admin</h1>
+<form method="post" action="/setup">
+  <div class="mb-3">
+    <label class="form-label">Email</label>
+    <input type="email" name="email" class="form-control" required>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Login Password</label>
+    <input type="password" name="login_password" class="form-control" required>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Master Password</label>
+    <input type="password" name="master_password" class="form-control" required>
+  </div>
+  <button class="btn btn-primary" type="submit">Create Admin</button>
+</form>
+{{ end }}

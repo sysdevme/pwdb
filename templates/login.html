@@ -1,0 +1,66 @@
+{{ define "content" }}
+<section>
+  <div class="px-4 py-5 px-md-5 text-center text-lg-start d-flex align-items-center" style="background-color: hsl(0, 0%, 96%); min-height: 100vh;">
+    <div class="container">
+      <div class="row gx-lg-5 align-items-center">
+        <div class="col-lg-6 mb-5 mb-lg-0 d-flex align-items-center">
+          <div class="w-100">
+            <h1 class="display-3 fw-bold ls-tight mb-3">
+              The best offer <br />
+              <span class="text-primary">for your Home</span>
+            </h1>
+            <p style="color: hsl(217, 10%, 50.8%)">
+              Securely manage logins, notes, and metadata in one place. Unlock quickly with Touch ID when available.
+            </p>
+          </div>
+        </div>
+
+        <div class="col-lg-6 mb-5 mb-lg-0 d-flex align-items-center">
+          <div class="card">
+            <div class="card-body py-5 px-md-5">
+              {{ if .Error }}
+              <div class="alert alert-danger">{{ .Error }}</div>
+              {{ end }}
+              <form method="post" action="/login">
+                <div class="mb-4">
+                  <label class="form-label">Email address</label>
+                  <input type="email" name="email" class="form-control" required>
+                </div>
+
+                <div class="mb-4">
+                  <label class="form-label">Login Password</label>
+                  <input type="password" name="password" class="form-control" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100 mb-2">
+                  Sign in
+                </button>
+              </form>
+              <div class="text-center mt-3">
+                <button type="button" class="btn btn-link" data-bs-toggle="modal" data-bs-target="#restoreModal">Restore</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="modal fade" id="restoreModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Restore Request</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        We will inform admin.
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" data-bs-dismiss="modal">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+{{ end }}
