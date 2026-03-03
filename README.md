@@ -11,6 +11,8 @@ This is a starter scaffold for a password manager with:
 - Dockerized app + DB
 - Web UI built with Bootstrap 5 (no custom CSS)
 - Data types: login/password, tagged password entries, secure notes
+- Multi-user admin setup with pending/active user lifecycle
+- Item sharing for passwords and secure notes between active users
 - Server-side encryption with Argon2id + AES-GCM (key derived from `MASTER_PASSWORD`)
 
 ## Quick start
@@ -36,8 +38,33 @@ http://localhost:8080/login
 ```
 
 Admin can create additional users in the Admin page.
+Newly created users start in `pending` status and automatically become `active` after their first successful login.
+
+## Current features
+
+- Password and secure note CRUD
+- Tags and groups with detail pages showing where each tag/group is used
+- Item sharing with other active users (shared items are read-only for recipients)
+- Per-user login password and master password
+- Account page for users to update their own login and master passwords
+- Admin backup/restore and credential reset tools
+- 1Password 7 `.1pif` import with import issue tracking
+- Timed unlock session with manual lock
+- macOS biometric helper integration; Windows skips biometric probing and falls back directly to the password prompt
 
 ## Release Notes
+
+<details>
+<summary>v3.0.1</summary>
+
+- Added user lifecycle status (`pending` to `active` on first successful login).
+- Added sharing for passwords and secure notes between active users.
+- Added account page for self-service login/master password updates.
+- Added tag and group detail pages listing the items that use them.
+- Windows clients now skip biometric helper checks and go straight to password unlock.
+- Added schema migration `008_user_status_and_sharing.sql`.
+
+</details>
 
 <details>
 <summary>v2.1.2</summary>
@@ -107,13 +134,12 @@ make restart        # Recreate Docker Compose services
 
 `make docker-up`, `make docker-down`, and `make restart` use `COMPOSE_FILE` from the Makefile.
 
-- Default in this repository: `docker-compose-env.yml`
-- Current checked-in Compose file: `docker-compose.yml`
+- Default in this repository: `docker-compose.yml`
 
-If you want to use the checked-in file, pass it explicitly:
+If you want to use a different Compose file, pass it explicitly:
 
 ```bash
-make docker-up COMPOSE_FILE=docker-compose.yml
+make docker-up COMPOSE_FILE=your-compose-file.yml
 ```
 
 ### macOS biometric helper targets
@@ -141,6 +167,7 @@ make restart-all     # Restart Docker services + helper server
 ## macOS TouchID/FaceID helper (CLI)
 
 This is optional and works with the current `/auth/biometric-unlock` endpoint.
+The biometric helper is intended for macOS local use. On Windows, the UI falls back directly to the master password prompt.
 
 Build:
 ```bash
