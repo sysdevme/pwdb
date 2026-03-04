@@ -45,6 +45,12 @@ Newly created users start in `pending` status and automatically become `active` 
 - Password and secure note CRUD
 - Tags and groups with detail pages showing where each tag/group is used
 - Item sharing with other active users (shared items are read-only for recipients)
+- Field-based search on list pages (selector + query input)
+- Pagination on list pages (10 records per page)
+- Bordered table design for passwords, notes, tags, and groups
+- Shared-item visual marker with deterministic pixel avatar
+- Automatic list hiding on unlock session expiration until re-unlock
+- Navbar view-size control (100% / 90% / 80% / 70% / 60% / 50%)
 - Per-user login password and master password
 - Account page for users to update their own login and master passwords
 - Admin backup/restore and credential reset tools
@@ -53,6 +59,19 @@ Newly created users start in `pending` status and automatically become `active` 
 - macOS biometric helper integration; Windows skips biometric probing and falls back directly to the password prompt
 
 ## Release Notes
+
+<details>
+<summary>v3.0.2</summary>
+
+- Redesigned list pages to bordered admin-style tables.
+- Added field-based search controls for passwords, notes, tags, and groups.
+- Added 10-items-per-page pagination with filter-preserving next/previous links.
+- Added shared-item indicator column with deterministic pixel avatars.
+- Hid records immediately on unlock-session expiration and on locked page render.
+- Added navbar site-width control for quick resize presets.
+- Added `make.bat` for Windows users with Makefile-equivalent core targets.
+
+</details>
 
 <details>
 <summary>v3.0.1</summary>
@@ -128,6 +147,16 @@ make docker-build   # Build Docker image password-manager-go:local
 make docker-up      # Start app + dependencies with Docker Compose
 make docker-down    # Stop Docker Compose services
 make restart        # Recreate Docker Compose services
+```
+
+### Windows helper
+
+For Windows PowerShell/CMD without GNU Make, use:
+
+```bat
+.\make.bat build
+.\make.bat docker-up
+.\make.bat restart
 ```
 
 ### Docker Compose file selection

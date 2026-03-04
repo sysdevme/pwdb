@@ -2,24 +2,69 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h1 class="h3 mb-0">Groups</h1>
 </div>
-<table class="table table-striped">
-  <thead>
-    <tr>
-      <th>Name</th>
-      <th>Items</th>
-    </tr>
-  </thead>
-  <tbody>
-    {{ if .Items }}
-      {{ range .Items }}
-      <tr>
-        <td><a href="{{ .URL }}">{{ .Name }}</a></td>
-        <td>{{ .Count }}</td>
-      </tr>
-      {{ end }}
-    {{ else }}
-      <tr><td colspan="2" class="text-muted">No groups</td></tr>
-    {{ end }}
-  </tbody>
-</table>
+<form method="get" action="/groups" class="mb-3">
+  <div class="input-group">
+    <select name="field" class="form-select" style="max-width: 220px;">
+      <option value="name" {{ if eq .Search.Field "name" }}selected{{ end }}>Group Name</option>
+      <option value="count" {{ if eq .Search.Field "count" }}selected{{ end }}>Item Count</option>
+      <option value="all" {{ if eq .Search.Field "all" }}selected{{ end }}>All Fields</option>
+    </select>
+    <input type="text" name="q" class="form-control" value="{{ .Search.Q }}" placeholder="Type to search...">
+    <button class="btn btn-outline-secondary" type="submit">Search</button>
+    <a class="btn btn-outline-secondary" href="/groups">Reset</a>
+  </div>
+</form>
+<div class="alert alert-warning {{ if not .Locked }}d-none{{ end }}" data-show-on-expire>
+  Session expired. Unlock to view records.
+</div>
+{{ if .Locked }}
+  <div class="alert alert-light border text-muted mb-0">Locked. Unlock to view groups.</div>
+{{ else }}
+{{ if .Items }}
+  <div class="table-responsive" data-hide-on-expire>
+    <table class="table table-bordered table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Group</th>
+          <th>Items</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Items }}
+          <tr>
+            <td>
+              <div class="fw-bold">{{ .Name }}</div>
+              <div class="small text-muted">View all related passwords and notes</div>
+            </td>
+            <td><span class="badge rounded-pill text-bg-primary">{{ .Count }}</span></td>
+            <td><a href="{{ .URL }}" class="btn btn-sm btn-outline-secondary">Open</a></td>
+          </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+  {{ with .Pager }}
+    <div class="d-flex justify-content-between align-items-center mt-3" data-hide-on-expire>
+      <div class="small text-muted">
+        Page {{ .Page }} of {{ .TotalPages }} ({{ .TotalItems }} total)
+      </div>
+      <div class="btn-group">
+        {{ if .HasPrev }}
+          <a class="btn btn-sm btn-outline-secondary" href="{{ .PrevURL }}">Previous</a>
+        {{ else }}
+          <span class="btn btn-sm btn-outline-secondary disabled">Previous</span>
+        {{ end }}
+        {{ if .HasNext }}
+          <a class="btn btn-sm btn-outline-secondary" href="{{ .NextURL }}">Next</a>
+        {{ else }}
+          <span class="btn btn-sm btn-outline-secondary disabled">Next</span>
+        {{ end }}
+      </div>
+    </div>
+  {{ end }}
+{{ else }}
+  <div class="alert alert-light border text-muted mb-0">No groups yet.</div>
+{{ end }}
+{{ end }}
 {{ end }}

@@ -7,6 +7,39 @@
     <title>{{ .Title }} | Password Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+      :root {
+        --pm-site-scale: 1;
+      }
+      .pm-site-frame {
+        width: min(100%, calc(var(--pm-site-scale) * 100%));
+        max-width: none;
+        margin-left: auto;
+        margin-right: auto;
+        transition: width 0.2s ease;
+      }
+      @media (max-width: 768px) {
+        .pm-site-frame {
+          width: 100%;
+        }
+      }
+      .pm-avatar {
+        width: 2rem;
+        height: 2rem;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        background: #f8f9fa;
+      }
+      .pm-avatar canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+    </style>
   </head>
   <body>
     <form id="pm-bio-unlock-form" method="POST" action="/auth/biometric-unlock" style="display:none">
@@ -15,7 +48,7 @@
     </form>
     {{ if and .CurrentUserEmail (ne .RequestPath "/login") (ne .RequestPath "/setup") }}
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-      <div class="container">
+      <div class="container pm-site-frame">
         <a class="navbar-brand" href="/">Password Manager</a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain" aria-controls="navMain" aria-expanded="false" aria-label="Toggle navigation">
           <span class="navbar-toggler-icon"></span>
@@ -42,6 +75,19 @@
               {{ else }}
                 <span class="badge text-bg-secondary">Locked</span>
               {{ end }}
+              <div class="dropdown">
+                <button class="btn btn-sm btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                  Size <span id="siteScaleLabel">100%</span>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                  <li><button class="dropdown-item" type="button" data-site-scale-opt="1">100% (Full)</button></li>
+                  <li><button class="dropdown-item" type="button" data-site-scale-opt="0.9">90%</button></li>
+                  <li><button class="dropdown-item" type="button" data-site-scale-opt="0.8">80%</button></li>
+                  <li><button class="dropdown-item" type="button" data-site-scale-opt="0.7">70%</button></li>
+                  <li><button class="dropdown-item" type="button" data-site-scale-opt="0.6">60%</button></li>
+                  <li><button class="dropdown-item" type="button" data-site-scale-opt="0.5">50%</button></li>
+                </ul>
+              </div>
               <button type="button" class="btn btn-sm btn-outline-light" id="unlockButton">Unlock</button>
               <span class="text-light small">{{ .CurrentUserEmail }}</span>
               <form method="post" action="/logout" class="d-inline">
@@ -58,7 +104,7 @@
       {{ block "content" . }}{{ end }}
     </main>
     {{ else }}
-    <main class="container py-4">
+    <main class="container py-4 pm-site-frame">
       {{ block "content" . }}{{ end }}
     </main>
     {{ end }}
@@ -193,6 +239,12 @@
         const tick = () => {
           if (seconds <= 0) {
             el.textContent = "(expired)";
+            document.querySelectorAll("[data-hide-on-expire]").forEach((node) => {
+              node.style.display = "none";
+            });
+            document.querySelectorAll("[data-show-on-expire]").forEach((node) => {
+              node.classList.remove("d-none");
+            });
             showOverlay();
             window.dispatchEvent(new CustomEvent("pm-unlock-expired"));
             return;
@@ -202,6 +254,82 @@
           setTimeout(tick, 1000);
         };
         tick();
+      })();
+      (function () {
+        const storageKey = "pm-site-scale";
+        const label = document.getElementById("siteScaleLabel");
+
+        function clampScale(value) {
+          if (Number.isNaN(value)) return 1;
+          if (value < 0.5) return 0.5;
+          if (value > 1) return 1;
+          return value;
+        }
+
+        function renderLabel(scale) {
+          if (!label) return;
+          label.textContent = Math.round(scale * 100) + "%";
+        }
+
+        function applyScale(value) {
+          const scale = clampScale(value);
+          document.documentElement.style.setProperty("--pm-site-scale", String(scale));
+          renderLabel(scale);
+          return scale;
+        }
+
+        const stored = parseFloat(localStorage.getItem(storageKey) || "1");
+        applyScale(stored);
+
+        document.querySelectorAll("[data-site-scale-opt]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const raw = parseFloat(btn.getAttribute("data-site-scale-opt") || "1");
+            const scale = applyScale(raw);
+            localStorage.setItem(storageKey, String(scale));
+          });
+        });
+      })();
+      (function () {
+        function hashSeed(seed) {
+          let hash = 0;
+          for (let i = 0; i < seed.length; i++) {
+            hash = ((hash << 5) - hash) + seed.charCodeAt(i);
+            hash |= 0;
+          }
+          return Math.abs(hash);
+        }
+        function colorFromHash(hash, offset) {
+          const hue = (hash + offset) % 360;
+          return "hsl(" + hue + ", 68%, 58%)";
+        }
+        document.querySelectorAll("[data-pixel-avatar]").forEach((el) => {
+          const seed = el.getAttribute("data-pixel-avatar") || "shared";
+          const size = 40;
+          const cells = 5;
+          const cell = Math.floor(size / cells);
+          const hash = hashSeed(seed);
+          const canvas = document.createElement("canvas");
+          canvas.width = size;
+          canvas.height = size;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return;
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, size, size);
+          ctx.fillStyle = colorFromHash(hash, 0);
+          for (let y = 0; y < cells; y++) {
+            for (let x = 0; x < Math.ceil(cells / 2); x++) {
+              const bit = (hash >> ((y * 3 + x) % 24)) & 1;
+              if (!bit) continue;
+              const left = x * cell;
+              const right = (cells - 1 - x) * cell;
+              ctx.fillRect(left, y * cell, cell, cell);
+              ctx.fillRect(right, y * cell, cell, cell);
+            }
+          }
+          ctx.fillStyle = colorFromHash(hash, 90);
+          ctx.fillRect(0, size - cell, size, cell);
+          el.replaceChildren(canvas);
+        });
       })();
     </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>

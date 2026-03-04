@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -266,6 +267,18 @@ func (s *Server) handlePasswords(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
+	searchField, searchText := parseFieldSearch(r, "all")
+	if !s.isUnlocked(r) {
+		s.renderWithUnlock(w, r, "passwords.html", map[string]any{
+			"Title":  "Passwords",
+			"Locked": true,
+			"Search": map[string]string{
+				"Field": searchField,
+				"Q":     searchText,
+			},
+		})
+		return
+	}
 	items, err := s.store.ListPasswords(r.Context(), user.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -288,9 +301,24 @@ func (s *Server) handlePasswords(w http.ResponseWriter, r *http.Request) {
 			"CanManage":   fmt.Sprintf("%t", item.UserID == user.ID),
 		})
 	}
+	viewItems = filterPasswordRows(viewItems, searchField, searchText)
+	page := parsePage(r, 1)
+	start, end, pager := paginateWindow(len(viewItems), page, 10)
+	if pager["HasPrev"].(bool) {
+		pager["PrevURL"] = buildPageURL("/passwords", searchField, searchText, pager["PrevPage"].(int))
+	}
+	if pager["HasNext"].(bool) {
+		pager["NextURL"] = buildPageURL("/passwords", searchField, searchText, pager["NextPage"].(int))
+	}
+	viewItems = viewItems[start:end]
 	s.renderWithUnlock(w, r, "passwords.html", map[string]any{
 		"Title": "Passwords",
 		"Items": viewItems,
+		"Pager": pager,
+		"Search": map[string]string{
+			"Field": searchField,
+			"Q":     searchText,
+		},
 	})
 }
 
@@ -545,6 +573,18 @@ func (s *Server) handleNotes(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
+	searchField, searchText := parseFieldSearch(r, "all")
+	if !s.isUnlocked(r) {
+		s.renderWithUnlock(w, r, "notes.html", map[string]any{
+			"Title":  "Secure Notes",
+			"Locked": true,
+			"Search": map[string]string{
+				"Field": searchField,
+				"Q":     searchText,
+			},
+		})
+		return
+	}
 	items, err := s.store.ListNotes(r.Context(), user.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -566,9 +606,24 @@ func (s *Server) handleNotes(w http.ResponseWriter, r *http.Request) {
 			"CanManage":   fmt.Sprintf("%t", item.UserID == user.ID),
 		})
 	}
+	viewItems = filterNoteRows(viewItems, searchField, searchText)
+	page := parsePage(r, 1)
+	start, end, pager := paginateWindow(len(viewItems), page, 10)
+	if pager["HasPrev"].(bool) {
+		pager["PrevURL"] = buildPageURL("/notes", searchField, searchText, pager["PrevPage"].(int))
+	}
+	if pager["HasNext"].(bool) {
+		pager["NextURL"] = buildPageURL("/notes", searchField, searchText, pager["NextPage"].(int))
+	}
+	viewItems = viewItems[start:end]
 	s.renderWithUnlock(w, r, "notes.html", map[string]any{
 		"Title": "Secure Notes",
 		"Items": viewItems,
+		"Pager": pager,
+		"Search": map[string]string{
+			"Field": searchField,
+			"Q":     searchText,
+		},
 	})
 }
 
@@ -1185,6 +1240,18 @@ func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
+	searchField, searchText := parseFieldSearch(r, "name")
+	if !s.isUnlocked(r) {
+		s.renderWithUnlock(w, r, "groups.html", map[string]any{
+			"Title":  "Groups",
+			"Locked": true,
+			"Search": map[string]string{
+				"Field": searchField,
+				"Q":     searchText,
+			},
+		})
+		return
+	}
 	items, err := s.store.ListGroups(r.Context(), user.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1198,9 +1265,24 @@ func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
 			"URL":  "/groups/view?name=" + urlQueryEscape(g.Name),
 		})
 	}
+	viewItems = filterCollectionRows(viewItems, searchField, searchText)
+	page := parsePage(r, 1)
+	start, end, pager := paginateWindow(len(viewItems), page, 10)
+	if pager["HasPrev"].(bool) {
+		pager["PrevURL"] = buildPageURL("/groups", searchField, searchText, pager["PrevPage"].(int))
+	}
+	if pager["HasNext"].(bool) {
+		pager["NextURL"] = buildPageURL("/groups", searchField, searchText, pager["NextPage"].(int))
+	}
+	viewItems = viewItems[start:end]
 	s.renderWithUnlock(w, r, "groups.html", map[string]any{
 		"Title": "Groups",
 		"Items": viewItems,
+		"Pager": pager,
+		"Search": map[string]string{
+			"Field": searchField,
+			"Q":     searchText,
+		},
 	})
 }
 
@@ -1208,6 +1290,18 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.currentUser(r)
 	if !ok {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	searchField, searchText := parseFieldSearch(r, "name")
+	if !s.isUnlocked(r) {
+		s.renderWithUnlock(w, r, "tags.html", map[string]any{
+			"Title":  "Tags",
+			"Locked": true,
+			"Search": map[string]string{
+				"Field": searchField,
+				"Q":     searchText,
+			},
+		})
 		return
 	}
 	items, err := s.store.ListTags(r.Context(), user.ID)
@@ -1223,9 +1317,24 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 			"URL":  "/tags/view?name=" + urlQueryEscape(t.Name),
 		})
 	}
+	viewItems = filterCollectionRows(viewItems, searchField, searchText)
+	page := parsePage(r, 1)
+	start, end, pager := paginateWindow(len(viewItems), page, 10)
+	if pager["HasPrev"].(bool) {
+		pager["PrevURL"] = buildPageURL("/tags", searchField, searchText, pager["PrevPage"].(int))
+	}
+	if pager["HasNext"].(bool) {
+		pager["NextURL"] = buildPageURL("/tags", searchField, searchText, pager["NextPage"].(int))
+	}
+	viewItems = viewItems[start:end]
 	s.renderWithUnlock(w, r, "tags.html", map[string]any{
 		"Title": "Tags",
 		"Items": viewItems,
+		"Pager": pager,
+		"Search": map[string]string{
+			"Field": searchField,
+			"Q":     searchText,
+		},
 	})
 }
 
@@ -1839,6 +1948,181 @@ func splitComma(value string) []string {
 			continue
 		}
 		out = append(out, trim)
+	}
+	return out
+}
+
+func parsePage(r *http.Request, fallback int) int {
+	raw := strings.TrimSpace(r.URL.Query().Get("page"))
+	if raw == "" {
+		return fallback
+	}
+	page, err := strconv.Atoi(raw)
+	if err != nil || page < 1 {
+		return fallback
+	}
+	return page
+}
+
+func parseFieldSearch(r *http.Request, defaultField string) (string, string) {
+	field := strings.TrimSpace(r.URL.Query().Get("field"))
+	if field == "" {
+		field = defaultField
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	return strings.ToLower(field), q
+}
+
+func paginateWindow(total int, page int, pageSize int) (start int, end int, pager map[string]any) {
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	totalPages := 1
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	if page < 1 {
+		page = 1
+	}
+	start = (page - 1) * pageSize
+	if start < 0 {
+		start = 0
+	}
+	if start > total {
+		start = total
+	}
+	end = start + pageSize
+	if end > total {
+		end = total
+	}
+	pager = map[string]any{
+		"Page":       page,
+		"PageSize":   pageSize,
+		"TotalItems": total,
+		"TotalPages": totalPages,
+		"HasPrev":    page > 1,
+		"HasNext":    page < totalPages,
+		"PrevPage":   page - 1,
+		"NextPage":   page + 1,
+	}
+	return start, end, pager
+}
+
+func buildPageURL(path string, field string, q string, page int) string {
+	values := url.Values{}
+	values.Set("page", strconv.Itoa(page))
+	if strings.TrimSpace(field) != "" {
+		values.Set("field", field)
+	}
+	if strings.TrimSpace(q) != "" {
+		values.Set("q", q)
+	}
+	return path + "?" + values.Encode()
+}
+
+func containsFold(haystack string, needle string) bool {
+	return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
+}
+
+func filterPasswordRows(items []map[string]string, field string, q string) []map[string]string {
+	if strings.TrimSpace(q) == "" {
+		return items
+	}
+	var out []map[string]string
+	for _, item := range items {
+		status := "shared"
+		if item["CanManage"] == "true" {
+			status = "owned"
+		}
+		var match bool
+		switch field {
+		case "title":
+			match = containsFold(item["Title"], q)
+		case "username":
+			match = containsFold(item["Username"], q)
+		case "tags":
+			match = containsFold(item["Tags"], q)
+		case "groups":
+			match = containsFold(item["Groups"], q)
+		case "shared":
+			match = containsFold(item["SharedLabel"], q)
+		case "status":
+			match = containsFold(status, q)
+		default:
+			match = containsFold(item["Title"], q) ||
+				containsFold(item["Username"], q) ||
+				containsFold(item["Tags"], q) ||
+				containsFold(item["Groups"], q) ||
+				containsFold(item["SharedLabel"], q) ||
+				containsFold(status, q)
+		}
+		if match {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func filterNoteRows(items []map[string]string, field string, q string) []map[string]string {
+	if strings.TrimSpace(q) == "" {
+		return items
+	}
+	var out []map[string]string
+	for _, item := range items {
+		status := "shared"
+		if item["CanManage"] == "true" {
+			status = "owned"
+		}
+		var match bool
+		switch field {
+		case "title":
+			match = containsFold(item["Title"], q)
+		case "tags":
+			match = containsFold(item["Tags"], q)
+		case "groups":
+			match = containsFold(item["Groups"], q)
+		case "updated":
+			match = containsFold(item["Updated"], q)
+		case "shared":
+			match = containsFold(item["SharedLabel"], q)
+		case "status":
+			match = containsFold(status, q)
+		default:
+			match = containsFold(item["Title"], q) ||
+				containsFold(item["Tags"], q) ||
+				containsFold(item["Groups"], q) ||
+				containsFold(item["Updated"], q) ||
+				containsFold(item["SharedLabel"], q) ||
+				containsFold(status, q)
+		}
+		if match {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func filterCollectionRows(items []map[string]any, field string, q string) []map[string]any {
+	if strings.TrimSpace(q) == "" {
+		return items
+	}
+	var out []map[string]any
+	for _, item := range items {
+		name := fmt.Sprint(item["Name"])
+		count := fmt.Sprint(item["Count"])
+		var match bool
+		switch field {
+		case "count":
+			match = containsFold(count, q)
+		default:
+			match = containsFold(name, q) || containsFold(count, q)
+		}
+		if match {
+			out = append(out, item)
+		}
 	}
 	return out
 }
