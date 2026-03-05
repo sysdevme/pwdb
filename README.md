@@ -22,39 +22,19 @@ cp .env.example .env
 docker compose up --build
 ```
 
-App: https://your-domain  
+App: http://localhost:8080  
 DB: localhost:5432 (user: `pm`, password: `pm`, db: `pm`)
-
-## HTTPS (Let's Encrypt via Caddy)
-
-The default Docker setup uses Caddy as a reverse proxy:
-- Caddy handles HTTPS and automatic Let's Encrypt certificate renewals.
-- The Go app runs internally on HTTP (`app:8080`).
-
-Required before first run:
-- Set `APP_DOMAIN` in `.env` to your real domain (example: `un1t.org`).
-- Point domain DNS to your public IP.
-- Forward router/firewall ports `80` and `443` to the Docker host.
-
-## Optional manual TLS mode (without Caddy)
-
-If you want the Go app to terminate TLS directly:
-- set `APP_TLS=true`
-- place certificate/key files in `certs/` (folder is gitignored)
-- supported cert names: `certificate`, `certificate.pem`, `certificate.crt`
-- supported key names: `key`, `private`, `key.pem`, `private.key`, `private.pem`
-- optional overrides: `TLS_CERT_FILE`/`CERT_FILE`, `TLS_KEY_FILE`/`KEY_FILE`
 
 ## Multi-user setup
 
 On first run, open:
 ```
-https://your-domain/setup
+http://localhost:8080/setup
 ```
 
 Create the initial admin user. After that, log in at:
 ```
-https://your-domain/login
+http://localhost:8080/login
 ```
 
 Admin can create additional users in the Admin page.
@@ -172,10 +152,7 @@ Key settings:
 - `MASTER_PASSWORD` (required, used for server-side encryption/decryption)
 - `DATABASE_URL`
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
-- `APP_DOMAIN` (used by Caddy for HTTPS cert issuance)
 - `APP_ADDR`
-- `APP_TLS` (`false` by default; set `true` only for manual TLS mode)
-- `TLS_CERT_FILE`, `TLS_KEY_FILE` (optional, manual TLS mode only)
 
 ## Using the Makefile
 
@@ -232,7 +209,7 @@ make restart-all     # Restart Docker services + helper server
 
 ## Security Limitations
 
-- HTTPS depends on correct domain/DNS/port forwarding when using Caddy + Let's Encrypt.
+- The application does not provide TLS/HTTPS by default.
 - Server-side encryption relies on a single `MASTER_PASSWORD` from the environment (not per-user).
 - No built-in rate limiting or brute-force protection is implemented.
 - This project should still be placed behind a hardened reverse proxy for production deployments.
@@ -260,7 +237,7 @@ Run (one-shot, prints a token):
 
 Run helper server for the web UI button (per user):
 ```bash
-export PM_SERVER_URL="https://un1t.org/auth/biometric-token"
+export PM_SERVER_URL="http://127.0.0.1:8080/auth/biometric-token"
 export PM_USER_EMAIL="your-user@example.com"
 ./bin/macos-unlock --server
 ```

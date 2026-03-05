@@ -12,6 +12,5 @@ COPY templates /app/templates
 COPY static /app/static
 COPY db/migrations /app/db/migrations
 ENV APP_ADDR=:8080
-ENV APP_TLS=false
 EXPOSE 8080
 ENTRYPOINT ["/app/server"]

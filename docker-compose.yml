@@ -17,30 +17,11 @@ services:
       context: .
     env_file:
       - .env
-    environment:
-      APP_ADDR: ":8080"
-      APP_TLS: "false"
-    expose:
-      - "8080"
+    ports:
+      - "8080:8080"
     depends_on:
       db:
         condition: service_healthy
-  caddy:
-    image: caddy:2
-    environment:
-      APP_DOMAIN: ${APP_DOMAIN:-localhost}
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      app:
-        condition: service_started
 
 volumes:
   pm_data:
-  caddy_data:
-  caddy_config:
