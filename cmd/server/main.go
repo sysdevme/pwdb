@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"password-manager-go/internal/crypto"
@@ -13,10 +16,14 @@ import (
 )
 
 func main() {
-	addr := envOr("APP_ADDR", ":8080")
+	addr := envOr("APP_ADDR", ":8443")
 	master := os.Getenv("MASTER_PASSWORD")
 	if master == "" {
 		log.Println("warning: MASTER_PASSWORD not set")
+	}
+	certFile, keyFile, err := resolveTLSFiles()
+	if err != nil {
+		log.Fatalf("tls config: %v", err)
 	}
 
 	ctx := context.Background()
@@ -41,8 +48,8 @@ func main() {
 		Handler:           server.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	log.Printf("listening on %s", addr)
-	if err := srv.ListenAndServe(); err != nil {
+	log.Printf("listening on https://0.0.0.0%s", addr)
+	if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
@@ -65,4 +72,52 @@ func waitForDB(ctx context.Context, store *db.Store) error {
 		}
 		time.Sleep(2 * time.Second)
 	}
+}
+
+func resolveTLSFiles() (string, string, error) {
+	certCandidates := []string{
+		stringsTrim(os.Getenv("TLS_CERT_FILE")),
+		stringsTrim(os.Getenv("CERT_FILE")),
+		"certs/certificate",
+		"certs/certificate.pem",
+		"certs/certificate.crt",
+	}
+	keyCandidates := []string{
+		stringsTrim(os.Getenv("TLS_KEY_FILE")),
+		stringsTrim(os.Getenv("KEY_FILE")),
+		"certs/private",
+		"certs/private.key",
+		"certs/private.pem",
+		"certs/key",
+		"certs/key.pem",
+	}
+	certFile := firstExistingFile(certCandidates)
+	if certFile == "" {
+		return "", "", errors.New("certificate file not found in certs/ (expected certificate, certificate.pem, or certificate.crt)")
+	}
+	keyFile := firstExistingFile(keyCandidates)
+	if keyFile == "" {
+		return "", "", errors.New("private key file not found in certs/ (expected private, private.key, private.pem, key, or key.pem)")
+	}
+	return certFile, keyFile, nil
+}
+
+func firstExistingFile(candidates []string) string {
+	for _, candidate := range candidates {
+		path := stringsTrim(candidate)
+		if path == "" {
+			continue
+		}
+		if _, err := os.Stat(path); err == nil {
+			if abs, err := filepath.Abs(path); err == nil {
+				return abs
+			}
+			return path
+		}
+	}
+	return ""
+}
+
+func stringsTrim(value string) string {
+	return strings.TrimSpace(value)
 }

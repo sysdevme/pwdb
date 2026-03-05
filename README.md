@@ -22,19 +22,29 @@ cp .env.example .env
 docker compose up --build
 ```
 
-App: http://localhost:8080  
+App: https://localhost:8443  
 DB: localhost:5432 (user: `pm`, password: `pm`, db: `pm`)
+
+## Certificates
+
+Place TLS files in the project `certs/` folder (this folder is gitignored):
+- certificate: `certs/certificate` (or `certs/certificate.pem` / `certs/certificate.crt`)
+- private key: `certs/key` (or `certs/private`, `certs/key.pem`, `certs/private.key`, `certs/private.pem`)
+
+If needed, override certificate paths in `.env`:
+- `TLS_CERT_FILE` (or `CERT_FILE`)
+- `TLS_KEY_FILE` (or `KEY_FILE`)
 
 ## Multi-user setup
 
 On first run, open:
 ```
-http://localhost:8080/setup
+https://localhost:8443/setup
 ```
 
 Create the initial admin user. After that, log in at:
 ```
-http://localhost:8080/login
+https://localhost:8443/login
 ```
 
 Admin can create additional users in the Admin page.
@@ -153,6 +163,7 @@ Key settings:
 - `DATABASE_URL`
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
 - `APP_ADDR`
+- `TLS_CERT_FILE`, `TLS_KEY_FILE` (optional overrides for cert/key paths)
 
 ## Using the Makefile
 
@@ -209,10 +220,10 @@ make restart-all     # Restart Docker services + helper server
 
 ## Security Limitations
 
-- The application does not provide TLS/HTTPS by default.
+- The application now starts with HTTPS and requires certificate/key files.
 - Server-side encryption relies on a single `MASTER_PASSWORD` from the environment (not per-user).
 - No built-in rate limiting or brute-force protection is implemented.
-- This project must be placed behind a reverse proxy with HTTPS if used outside of a local environment.
+- This project should still be placed behind a hardened reverse proxy for production deployments.
 
 ## macOS TouchID/FaceID helper (CLI)
 
@@ -237,7 +248,7 @@ Run (one-shot, prints a token):
 
 Run helper server for the web UI button (per user):
 ```bash
-export PM_SERVER_URL="http://127.0.0.1:8080/auth/biometric-token"
+export PM_SERVER_URL="https://127.0.0.1:8443/auth/biometric-token"
 export PM_USER_EMAIL="your-user@example.com"
 ./bin/macos-unlock --server
 ```
@@ -249,7 +260,7 @@ This will prompt TouchID/FaceID, read the master password from Keychain, and ret
 
 If adapting this project for production use, you should:
 
-- Enforce HTTPS via reverse proxy (Nginx, Traefik, etc.)
+- Enforce TLS policy and certificate lifecycle via reverse proxy (Nginx, Traefik, etc.)
 - Use per-user encryption keys and a proper key management scheme
 - Add rate limiting and authentication hardening
 - Review and audit cryptographic implementation

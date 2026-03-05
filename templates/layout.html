@@ -45,6 +45,7 @@
     <form id="pm-bio-unlock-form" method="POST" action="/auth/biometric-unlock" style="display:none">
       <input type="hidden" name="token" id="pm-bio-token" value="">
       <input type="hidden" name="next" id="pm-bio-next" value="">
+      <input type="hidden" name="unlock_minutes" id="pm-bio-unlock-minutes" value="5">
     </form>
     {{ if and .CurrentUserEmail (ne .RequestPath "/login") (ne .RequestPath "/setup") }}
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
@@ -130,10 +131,17 @@
             <form method="post" action="/auth/biometric-unlock" id="unlockForm">
               <input type="hidden" name="next" id="unlockNext" value="{{ .RequestPath }}">
               <div class="mb-3">
+                <label class="form-label">Unlock Duration (minutes)</label>
+                <input type="number" name="unlock_minutes" class="form-control" id="unlockMinutesInput" value="5" min="1" max="120" required>
+              </div>
+              <div class="mb-3">
                 <label class="form-label">Master Password</label>
                 <input type="password" name="master_password" class="form-control" id="unlockMasterPassword" required>
               </div>
-              <button class="btn btn-primary" type="submit">Unlock</button>
+              <div class="d-flex gap-2">
+                <button class="btn btn-primary" type="submit">Unlock</button>
+                <button class="btn btn-outline-secondary" type="button" id="unlockWithBiometricButton">Use Biometrics</button>
+              </div>
             </form>
           </div>
         </div>
@@ -178,6 +186,16 @@
         }
         alert("Unlock required.");
       }
+      function getRequestedUnlockMinutes() {
+        const input = document.getElementById("unlockMinutesInput");
+        if (!input) return 5;
+        let value = parseInt(input.value || "5", 10);
+        if (isNaN(value)) value = 5;
+        if (value < 1) value = 1;
+        if (value > 120) value = 120;
+        input.value = String(value);
+        return value;
+      }
       async function unlockWithBiometric(nextPath) {
         if (isWindowsPlatform()) {
           showUnlockPasswordModal(nextPath);
@@ -195,6 +213,7 @@
           const form = new URLSearchParams();
           form.set("token", data.token);
           if (nextPath) form.set("next", nextPath);
+          form.set("unlock_minutes", String(getRequestedUnlockMinutes()));
           const serverResp = await fetch("/auth/biometric-unlock", {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -210,8 +229,18 @@
         const btn = document.getElementById("unlockButton");
         if (btn) {
           btn.addEventListener("click", () => {
-            unlockWithBiometric(currentPath());
+            showUnlockPasswordModal(currentPath());
           });
+        }
+        const bioBtn = document.getElementById("unlockWithBiometricButton");
+        if (bioBtn) {
+          if (isWindowsPlatform()) {
+            bioBtn.classList.add("d-none");
+          } else {
+            bioBtn.addEventListener("click", () => {
+              unlockWithBiometric(currentPath());
+            });
+          }
         }
       })();
       (function () {

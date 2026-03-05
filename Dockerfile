@@ -11,6 +11,7 @@ COPY --from=build /app/server /app/server
 COPY templates /app/templates
 COPY static /app/static
 COPY db/migrations /app/db/migrations
-ENV APP_ADDR=:8080
-EXPOSE 8080
+COPY certs /app/certs
+ENV APP_ADDR=:8443
+EXPOSE 8443
 ENTRYPOINT ["/app/server"]

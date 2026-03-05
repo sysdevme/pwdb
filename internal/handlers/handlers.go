@@ -1353,7 +1353,13 @@ func (s *Server) handleBiometricUnlock(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	settings := s.readUISettings(r)
-	cookieToken, err := s.unlock.Issue(user.ID, time.Duration(settings.UnlockMinutes)*time.Minute)
+	unlockMinutes := settings.UnlockMinutes
+	if raw := strings.TrimSpace(r.FormValue("unlock_minutes")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 && parsed <= 120 {
+			unlockMinutes = parsed
+		}
+	}
+	cookieToken, err := s.unlock.Issue(user.ID, time.Duration(unlockMinutes)*time.Minute)
 	if err != nil {
 		http.Error(w, "failed to issue token", http.StatusInternalServerError)
 		return
@@ -1365,7 +1371,7 @@ func (s *Server) handleBiometricUnlock(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   isSecureRequest(r),
-		MaxAge:   settings.UnlockMinutes * 60,
+		MaxAge:   unlockMinutes * 60,
 	})
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }
