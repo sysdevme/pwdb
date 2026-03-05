@@ -111,6 +111,42 @@
       </div>
     </div>
   </div>
+  <div class="card mt-4">
+    <div class="card-body">
+      <h5 class="card-title">Data Cleanup</h5>
+      <p class="text-muted">These operations are destructive. Record cleanup accepts a password or note UUID.</p>
+      <div class="row g-3">
+        <div class="col-lg-6">
+          <form method="post" action="/admin/records/clear-tags" class="p-3 border rounded">
+            <label class="form-label fw-semibold">Clean Tags For Record</label>
+            <input type="text" name="record_id" class="form-control mb-2" placeholder="Record UUID" required>
+            <button class="btn btn-outline-danger btn-sm" type="submit">Clean Record Tags</button>
+          </form>
+        </div>
+        <div class="col-lg-6">
+          <form method="post" action="/admin/records/clear-groups" class="p-3 border rounded">
+            <label class="form-label fw-semibold">Clean Groups For Record</label>
+            <input type="text" name="record_id" class="form-control mb-2" placeholder="Record UUID" required>
+            <button class="btn btn-outline-danger btn-sm" type="submit">Clean Record Groups</button>
+          </form>
+        </div>
+        <div class="col-lg-6">
+          <form method="post" action="/admin/tags/clear-all" class="p-3 border rounded">
+            <label class="form-label fw-semibold">Clear Tags Table</label>
+            <div class="small text-muted mb-2">Removes all tags and all tag links for all records.</div>
+            <button class="btn btn-danger btn-sm" type="submit">Clear All Tags</button>
+          </form>
+        </div>
+        <div class="col-lg-6">
+          <form method="post" action="/admin/groups/clear-all" class="p-3 border rounded">
+            <label class="form-label fw-semibold">Clear Groups Table</label>
+            <div class="small text-muted mb-2">Removes all groups and all group links for all records.</div>
+            <button class="btn btn-danger btn-sm" type="submit">Clear All Groups</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
 {{ else }}
   <div class="alert alert-warning">Locked or insufficient permissions.</div>
 {{ end }}

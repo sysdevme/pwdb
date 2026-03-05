@@ -27,6 +27,18 @@ type ctxKey int
 
 const userCtxKey ctxKey = 1
 
+const (
+	defaultPageSize      = 10
+	defaultUnlockMinutes = 5
+)
+
+type uiSettings struct {
+	PageSize      int
+	UnlockMinutes int
+	Firewall      bool
+	APIKey        string
+}
+
 type Server struct {
 	templateDir string
 	store       *db.Store
@@ -85,6 +97,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/groups/view", s.handleGroupDetail)
 	mux.HandleFunc("/tags", s.handleTags)
 	mux.HandleFunc("/tags/view", s.handleTagDetail)
+	mux.HandleFunc("/settings", s.handleSettings)
 	mux.HandleFunc("/import/1password", s.handleImport1Password)
 	mux.HandleFunc("/import/issues", s.handleImportIssues)
 	mux.HandleFunc("/auth/biometric-unlock", s.handleBiometricUnlock)
@@ -99,6 +112,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/admin/rebuild", s.handleAdminRebuild)
 	mux.HandleFunc("/admin/users", s.handleAdminCreateUser)
 	mux.HandleFunc("/admin/users/update", s.handleAdminUpdateUser)
+	mux.HandleFunc("/admin/records/clear-tags", s.handleAdminClearRecordTags)
+	mux.HandleFunc("/admin/records/clear-groups", s.handleAdminClearRecordGroups)
+	mux.HandleFunc("/admin/tags/clear-all", s.handleAdminClearAllTags)
+	mux.HandleFunc("/admin/groups/clear-all", s.handleAdminClearAllGroups)
 	return s.authMiddleware(mux)
 }
 
@@ -303,7 +320,8 @@ func (s *Server) handlePasswords(w http.ResponseWriter, r *http.Request) {
 	}
 	viewItems = filterPasswordRows(viewItems, searchField, searchText)
 	page := parsePage(r, 1)
-	start, end, pager := paginateWindow(len(viewItems), page, 10)
+	pageSize := s.readUISettings(r).PageSize
+	start, end, pager := paginateWindow(len(viewItems), page, pageSize)
 	if pager["HasPrev"].(bool) {
 		pager["PrevURL"] = buildPageURL("/passwords", searchField, searchText, pager["PrevPage"].(int))
 	}
@@ -608,7 +626,8 @@ func (s *Server) handleNotes(w http.ResponseWriter, r *http.Request) {
 	}
 	viewItems = filterNoteRows(viewItems, searchField, searchText)
 	page := parsePage(r, 1)
-	start, end, pager := paginateWindow(len(viewItems), page, 10)
+	pageSize := s.readUISettings(r).PageSize
+	start, end, pager := paginateWindow(len(viewItems), page, pageSize)
 	if pager["HasPrev"].(bool) {
 		pager["PrevURL"] = buildPageURL("/notes", searchField, searchText, pager["PrevPage"].(int))
 	}
@@ -1157,6 +1176,53 @@ func (s *Server) handleAccountUpdate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	settings := s.readUISettings(r)
+	switch r.Method {
+	case http.MethodGet:
+		s.renderWithUnlock(w, r, "settings.html", map[string]any{
+			"Title":    "Settings",
+			"Settings": settings,
+			"User":     user,
+		})
+	case http.MethodPost:
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		pageSize, err := strconv.Atoi(strings.TrimSpace(r.FormValue("page_size")))
+		if err != nil || pageSize < 5 || pageSize > 200 {
+			pageSize = settings.PageSize
+		}
+		unlockMinutes, err := strconv.Atoi(strings.TrimSpace(r.FormValue("unlock_minutes")))
+		if err != nil || unlockMinutes < 1 || unlockMinutes > 120 {
+			unlockMinutes = settings.UnlockMinutes
+		}
+		firewallEnabled := r.FormValue("firewall_enabled") == "on"
+		apiKey := strings.TrimSpace(r.FormValue("api_key"))
+		nextSettings := uiSettings{
+			PageSize:      pageSize,
+			UnlockMinutes: unlockMinutes,
+			Firewall:      firewallEnabled,
+			APIKey:        apiKey,
+		}
+		s.writeUISettings(w, r, nextSettings)
+		s.renderWithUnlock(w, r, "settings.html", map[string]any{
+			"Title":    "Settings",
+			"Settings": nextSettings,
+			"User":     user,
+			"Message":  "Settings saved.",
+		})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func (s *Server) handleBiometricUnlock(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1192,7 +1258,8 @@ func (s *Server) handleBiometricUnlock(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	cookieToken, err := s.unlock.Issue(user.ID, 5*time.Minute)
+	settings := s.readUISettings(r)
+	cookieToken, err := s.unlock.Issue(user.ID, time.Duration(settings.UnlockMinutes)*time.Minute)
 	if err != nil {
 		http.Error(w, "failed to issue token", http.StatusInternalServerError)
 		return
@@ -1204,7 +1271,7 @@ func (s *Server) handleBiometricUnlock(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   isSecureRequest(r),
-		MaxAge:   300,
+		MaxAge:   settings.UnlockMinutes * 60,
 	})
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }
@@ -1267,7 +1334,8 @@ func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	viewItems = filterCollectionRows(viewItems, searchField, searchText)
 	page := parsePage(r, 1)
-	start, end, pager := paginateWindow(len(viewItems), page, 10)
+	pageSize := s.readUISettings(r).PageSize
+	start, end, pager := paginateWindow(len(viewItems), page, pageSize)
 	if pager["HasPrev"].(bool) {
 		pager["PrevURL"] = buildPageURL("/groups", searchField, searchText, pager["PrevPage"].(int))
 	}
@@ -1319,7 +1387,8 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 	}
 	viewItems = filterCollectionRows(viewItems, searchField, searchText)
 	page := parsePage(r, 1)
-	start, end, pager := paginateWindow(len(viewItems), page, 10)
+	pageSize := s.readUISettings(r).PageSize
+	start, end, pager := paginateWindow(len(viewItems), page, pageSize)
 	if pager["HasPrev"].(bool) {
 		pager["PrevURL"] = buildPageURL("/tags", searchField, searchText, pager["PrevPage"].(int))
 	}
@@ -1551,6 +1620,148 @@ func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		"Title":   "Admin",
 		"Message": "User updated.",
 		"Users":   users,
+	})
+}
+
+func (s *Server) handleAdminClearRecordTags(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	admin, ok := s.currentUser(r)
+	if !ok || !admin.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	recordID := strings.TrimSpace(r.FormValue("record_id"))
+	if recordID == "" {
+		http.Error(w, "record id required", http.StatusBadRequest)
+		return
+	}
+	affected, err := s.store.ClearTagsForRecord(r.Context(), recordID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	users, err := s.store.ListUsers(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderWithUnlock(w, r, "admin.html", map[string]any{
+		"Title":   "Admin",
+		"Users":   users,
+		"Message": fmt.Sprintf("Cleared %d tag links for record %s.", affected, recordID),
+	})
+}
+
+func (s *Server) handleAdminClearRecordGroups(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	admin, ok := s.currentUser(r)
+	if !ok || !admin.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	recordID := strings.TrimSpace(r.FormValue("record_id"))
+	if recordID == "" {
+		http.Error(w, "record id required", http.StatusBadRequest)
+		return
+	}
+	affected, err := s.store.ClearGroupsForRecord(r.Context(), recordID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	users, err := s.store.ListUsers(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderWithUnlock(w, r, "admin.html", map[string]any{
+		"Title":   "Admin",
+		"Users":   users,
+		"Message": fmt.Sprintf("Cleared %d group links for record %s.", affected, recordID),
+	})
+}
+
+func (s *Server) handleAdminClearAllTags(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	admin, ok := s.currentUser(r)
+	if !ok || !admin.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	affected, err := s.store.ClearAllTags(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	users, err := s.store.ListUsers(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderWithUnlock(w, r, "admin.html", map[string]any{
+		"Title":   "Admin",
+		"Users":   users,
+		"Message": fmt.Sprintf("Cleared tags table. Removed %d tag rows.", affected),
+	})
+}
+
+func (s *Server) handleAdminClearAllGroups(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	admin, ok := s.currentUser(r)
+	if !ok || !admin.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	affected, err := s.store.ClearAllGroups(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	users, err := s.store.ListUsers(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderWithUnlock(w, r, "admin.html", map[string]any{
+		"Title":   "Admin",
+		"Users":   users,
+		"Message": fmt.Sprintf("Cleared groups table. Removed %d group rows.", affected),
 	})
 }
 
@@ -1950,6 +2161,88 @@ func splitComma(value string) []string {
 		out = append(out, trim)
 	}
 	return out
+}
+
+func (s *Server) readUISettings(r *http.Request) uiSettings {
+	settings := uiSettings{
+		PageSize:      defaultPageSize,
+		UnlockMinutes: defaultUnlockMinutes,
+		Firewall:      false,
+		APIKey:        "",
+	}
+	if c, err := r.Cookie("pm_page_size"); err == nil {
+		if v, err := strconv.Atoi(strings.TrimSpace(c.Value)); err == nil && v >= 5 && v <= 200 {
+			settings.PageSize = v
+		}
+	}
+	if c, err := r.Cookie("pm_unlock_minutes"); err == nil {
+		if v, err := strconv.Atoi(strings.TrimSpace(c.Value)); err == nil && v >= 1 && v <= 120 {
+			settings.UnlockMinutes = v
+		}
+	}
+	if c, err := r.Cookie("pm_firewall_enabled"); err == nil {
+		settings.Firewall = strings.TrimSpace(strings.ToLower(c.Value)) == "1" || strings.TrimSpace(strings.ToLower(c.Value)) == "true"
+	}
+	if c, err := r.Cookie("pm_api_key"); err == nil {
+		settings.APIKey = c.Value
+	}
+	return settings
+}
+
+func (s *Server) writeUISettings(w http.ResponseWriter, r *http.Request, settings uiSettings) {
+	if settings.PageSize < 5 {
+		settings.PageSize = 5
+	}
+	if settings.PageSize > 200 {
+		settings.PageSize = 200
+	}
+	if settings.UnlockMinutes < 1 {
+		settings.UnlockMinutes = 1
+	}
+	if settings.UnlockMinutes > 120 {
+		settings.UnlockMinutes = 120
+	}
+	oneYear := int((365 * 24 * time.Hour).Seconds())
+	http.SetCookie(w, &http.Cookie{
+		Name:     "pm_page_size",
+		Value:    strconv.Itoa(settings.PageSize),
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   isSecureRequest(r),
+		MaxAge:   oneYear,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "pm_unlock_minutes",
+		Value:    strconv.Itoa(settings.UnlockMinutes),
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   isSecureRequest(r),
+		MaxAge:   oneYear,
+	})
+	firewall := "0"
+	if settings.Firewall {
+		firewall = "1"
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "pm_firewall_enabled",
+		Value:    firewall,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   isSecureRequest(r),
+		MaxAge:   oneYear,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "pm_api_key",
+		Value:    settings.APIKey,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   isSecureRequest(r),
+		MaxAge:   oneYear,
+	})
 }
 
 func parsePage(r *http.Request, fallback int) int {

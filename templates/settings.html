@@ -1,0 +1,47 @@
+{{ define "content" }}
+<h1 class="h3 mb-3">Settings</h1>
+{{ if .Message }}
+  <div class="alert alert-success">{{ .Message }}</div>
+{{ end }}
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">Display And Session</h5>
+    <form method="post" action="/settings">
+      <div class="mb-3">
+        <label class="form-label">Records Per Page</label>
+        <select name="page_size" class="form-select">
+          <option value="5" {{ if eq .Settings.PageSize 5 }}selected{{ end }}>5</option>
+          <option value="10" {{ if eq .Settings.PageSize 10 }}selected{{ end }}>10</option>
+          <option value="20" {{ if eq .Settings.PageSize 20 }}selected{{ end }}>20</option>
+          <option value="50" {{ if eq .Settings.PageSize 50 }}selected{{ end }}>50</option>
+          <option value="100" {{ if eq .Settings.PageSize 100 }}selected{{ end }}>100</option>
+        </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Unlock Session Keep Alive (minutes)</label>
+        <input type="number" name="unlock_minutes" min="1" max="120" class="form-control" value="{{ .Settings.UnlockMinutes }}">
+      </div>
+      <div class="mb-3 form-check">
+        <input type="checkbox" name="firewall_enabled" class="form-check-input" id="firewallEnabled" {{ if .Settings.Firewall }}checked{{ end }}>
+        <label class="form-check-label" for="firewallEnabled">Firewall enabled (placeholder, not implemented yet)</label>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">API Key</label>
+        <input type="text" name="api_key" class="form-control" value="{{ .Settings.APIKey }}" placeholder="Enter API key">
+      </div>
+      <button class="btn btn-primary" type="submit">Save Settings</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <h5 class="card-title">Tags And Groups</h5>
+    <p class="text-muted">Management links moved from top menu.</p>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="/tags">Open Tags</a>
+      <a class="btn btn-outline-secondary" href="/groups">Open Groups</a>
+    </div>
+  </div>
+</div>
+{{ end }}

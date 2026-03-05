@@ -1048,6 +1048,54 @@ func (s *Store) GetActiveUserByEmail(ctx context.Context, email string) (models.
 	return user, nil
 }
 
+func (s *Store) ClearTagsForRecord(ctx context.Context, recordID string) (int64, error) {
+	uid, err := uuid.Parse(recordID)
+	if err != nil {
+		return 0, err
+	}
+	pwTag, err := s.pool.Exec(ctx, sqlClearPasswordTagsByRecordID, uid)
+	if err != nil {
+		return 0, err
+	}
+	noteTag, err := s.pool.Exec(ctx, sqlClearNoteTagsByRecordID, uid)
+	if err != nil {
+		return 0, err
+	}
+	return pwTag.RowsAffected() + noteTag.RowsAffected(), nil
+}
+
+func (s *Store) ClearGroupsForRecord(ctx context.Context, recordID string) (int64, error) {
+	uid, err := uuid.Parse(recordID)
+	if err != nil {
+		return 0, err
+	}
+	pwGroup, err := s.pool.Exec(ctx, sqlClearPasswordGroupsByRecordID, uid)
+	if err != nil {
+		return 0, err
+	}
+	noteGroup, err := s.pool.Exec(ctx, sqlClearNoteGroupsByRecordID, uid)
+	if err != nil {
+		return 0, err
+	}
+	return pwGroup.RowsAffected() + noteGroup.RowsAffected(), nil
+}
+
+func (s *Store) ClearAllTags(ctx context.Context) (int64, error) {
+	tag, err := s.pool.Exec(ctx, sqlClearAllTags)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (s *Store) ClearAllGroups(ctx context.Context) (int64, error) {
+	tag, err := s.pool.Exec(ctx, sqlClearAllGroups)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func parseOrNewUUID(value string) (uuid.UUID, error) {
 	if value == "" {
 		return uuid.New(), nil

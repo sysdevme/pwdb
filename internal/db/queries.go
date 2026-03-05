@@ -409,4 +409,28 @@ const (
 		WHERE sns.note_id = $1
 		ORDER BY u.email ASC
 	`
+
+	sqlClearPasswordTagsByRecordID = `
+		DELETE FROM entry_tags WHERE entry_id = $1
+	`
+
+	sqlClearNoteTagsByRecordID = `
+		DELETE FROM note_tags WHERE note_id = $1
+	`
+
+	sqlClearPasswordGroupsByRecordID = `
+		DELETE FROM group_entries WHERE entry_id = $1
+	`
+
+	sqlClearNoteGroupsByRecordID = `
+		DELETE FROM note_group_entries WHERE note_id = $1
+	`
+
+	sqlClearAllTags = `
+		DELETE FROM tags
+	`
+
+	sqlClearAllGroups = `
+		DELETE FROM groups
+	`
 )

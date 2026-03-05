@@ -51,14 +51,35 @@ Newly created users start in `pending` status and automatically become `active` 
 - Shared-item visual marker with deterministic pixel avatar
 - Automatic list hiding on unlock session expiration until re-unlock
 - Navbar view-size control (100% / 90% / 80% / 70% / 60% / 50%)
+- Settings page for per-user preferences (records/page, unlock duration, firewall placeholder, API key)
+- Tags and groups moved under Settings navigation links
 - Per-user login password and master password
 - Account page for users to update their own login and master passwords
 - Admin backup/restore and credential reset tools
+- Admin cleanup tools for tags/groups (record-level and global clear)
 - 1Password 7 `.1pif` import with import issue tracking
 - Timed unlock session with manual lock
 - macOS biometric helper integration; Windows skips biometric probing and falls back directly to the password prompt
 
 ## Release Notes
+
+<details>
+<summary>v3.0.4</summary>
+
+- Added Settings page with:
+  - records-per-page preference used by list pagination
+  - configurable unlock session duration (minutes)
+  - firewall enable/disable placeholder flag
+  - API key field
+- Moved Tags/Groups top-menu access into Settings.
+- Added Admin cleanup operations:
+  - clear tags for a specific record UUID
+  - clear groups for a specific record UUID
+  - clear all tags table data (with link cleanup)
+  - clear all groups table data (with link cleanup)
+- Unlock endpoint now respects configured unlock session minutes.
+
+</details>
 
 <details>
 <summary>v3.0.2</summary>
