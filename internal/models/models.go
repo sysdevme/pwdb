@@ -88,3 +88,11 @@ type Session struct {
 	CreatedAt time.Time
 	ExpiresAt time.Time
 }
+
+type PasswordShareLink struct {
+	Token     string
+	EntryID   string
+	CreatedBy string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}

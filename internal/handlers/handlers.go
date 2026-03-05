@@ -87,6 +87,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/passwords/delete", s.handlePasswordDelete)
 	mux.HandleFunc("/passwords/view", s.handlePasswordView)
 	mux.HandleFunc("/passwords/share", s.handlePasswordShare)
+	mux.HandleFunc("/passwords/share-link", s.handlePasswordShareLink)
 	mux.HandleFunc("/notes", s.handleNotes)
 	mux.HandleFunc("/notes/new", s.handleNoteForm)
 	mux.HandleFunc("/notes/edit", s.handleNoteEdit)
@@ -98,6 +99,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/tags", s.handleTags)
 	mux.HandleFunc("/tags/view", s.handleTagDetail)
 	mux.HandleFunc("/settings", s.handleSettings)
+	mux.HandleFunc("/share/password", s.handleSharedPassword)
 	mux.HandleFunc("/import/1password", s.handleImport1Password)
 	mux.HandleFunc("/import/issues", s.handleImportIssues)
 	mux.HandleFunc("/auth/biometric-unlock", s.handleBiometricUnlock)
@@ -898,7 +900,7 @@ func (s *Server) handlePasswordView(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		s.renderPasswordView(w, r, user, entry, s.isUnlocked(r), "")
+		s.renderPasswordView(w, r, user, entry, s.isUnlocked(r), "", "")
 	case http.MethodPost:
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form", http.StatusBadRequest)
@@ -918,13 +920,13 @@ func (s *Server) handlePasswordView(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		s.renderPasswordView(w, r, user, entry, true, "")
+		s.renderPasswordView(w, r, user, entry, true, "", "")
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (s *Server) renderPasswordView(w http.ResponseWriter, r *http.Request, user models.User, entry models.PasswordEntry, showSecret bool, message string) {
+func (s *Server) renderPasswordView(w http.ResponseWriter, r *http.Request, user models.User, entry models.PasswordEntry, showSecret bool, message string, shareLink string) {
 	canManage := entry.UserID == user.ID
 	data := map[string]any{
 		"Title":        "View Password",
@@ -946,6 +948,9 @@ func (s *Server) renderPasswordView(w http.ResponseWriter, r *http.Request, user
 	}
 	if message != "" {
 		data["Message"] = message
+	}
+	if shareLink != "" {
+		data["ShareLink"] = shareLink
 	}
 	if canManage {
 		if shareTargets, err := s.store.ListActiveUsersExcept(r.Context(), user.ID); err == nil {
@@ -1016,11 +1021,11 @@ func (s *Server) handlePasswordShare(w http.ResponseWriter, r *http.Request) {
 	}
 	targetEmail := strings.TrimSpace(r.FormValue("share_email"))
 	if targetEmail == "" {
-		s.renderPasswordView(w, r, user, entry, true, "Select a user to share with.")
+		s.renderPasswordView(w, r, user, entry, true, "Select a user to share with.", "")
 		return
 	}
 	if err := s.store.SharePasswordWithUser(r.Context(), user.ID, id, targetEmail); err != nil {
-		s.renderPasswordView(w, r, user, entry, true, err.Error())
+		s.renderPasswordView(w, r, user, entry, true, err.Error(), "")
 		return
 	}
 	updated, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
@@ -1028,7 +1033,96 @@ func (s *Server) handlePasswordShare(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderPasswordView(w, r, user, updated, true, "Password shared.")
+	s.renderPasswordView(w, r, user, updated, true, "Password shared.", "")
+}
+
+func (s *Server) handlePasswordShareLink(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	id := strings.TrimSpace(r.FormValue("id"))
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	entry, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
+	if err != nil || entry.UserID != user.ID {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	expiresMinutes, err := strconv.Atoi(strings.TrimSpace(r.FormValue("expires_minutes")))
+	if err != nil || expiresMinutes < 1 || expiresMinutes > 10080 {
+		s.renderPasswordView(w, r, user, entry, true, "Expiration must be between 1 and 10080 minutes.", "")
+		return
+	}
+	token, err := randomToken()
+	if err != nil {
+		http.Error(w, "failed to create token", http.StatusInternalServerError)
+		return
+	}
+	expiresAt := time.Now().Add(time.Duration(expiresMinutes) * time.Minute)
+	if err := s.store.CreatePasswordShareLink(r.Context(), token, entry.ID, user.ID, expiresAt); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	scheme := "http"
+	if isSecureRequest(r) {
+		scheme = "https"
+	}
+	shareLink := fmt.Sprintf("%s://%s/share/password?token=%s", scheme, r.Host, urlQueryEscape(token))
+	msg := fmt.Sprintf("Share URL created. Expires at %s.", expiresAt.Format(time.RFC3339))
+	updated, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderPasswordView(w, r, user, updated, true, msg, shareLink)
+}
+
+func (s *Server) handleSharedPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	if token == "" {
+		http.Error(w, "missing token", http.StatusBadRequest)
+		return
+	}
+	link, err := s.store.GetPasswordShareLinkByToken(r.Context(), token)
+	if err != nil {
+		http.Error(w, "link is invalid or expired", http.StatusNotFound)
+		return
+	}
+	entry, err := s.store.GetPasswordForShare(r.Context(), s.crypto, link.EntryID)
+	if err != nil {
+		http.Error(w, "link is invalid or expired", http.StatusNotFound)
+		return
+	}
+	s.render(w, "shared_password.html", map[string]any{
+		"Title":      "Shared Password",
+		"ItemName":   entry.Title,
+		"Username":   entry.Username,
+		"Password":   entry.Password,
+		"URL":        entry.URL,
+		"Notes":      entry.Notes,
+		"OwnerEmail": entry.OwnerEmail,
+		"ExpiresAt":  link.ExpiresAt,
+	})
 }
 
 func (s *Server) handleNoteShare(w http.ResponseWriter, r *http.Request) {
@@ -2086,7 +2180,7 @@ func (s *Server) handleUnlockPage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		if strings.HasPrefix(path, "/static/") || path == "/login" || path == "/setup" || path == "/auth/biometric-token" {
+		if strings.HasPrefix(path, "/static/") || path == "/login" || path == "/setup" || path == "/auth/biometric-token" || path == "/share/password" {
 			next.ServeHTTP(w, r)
 			return
 		}

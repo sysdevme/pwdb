@@ -1048,6 +1048,68 @@ func (s *Store) GetActiveUserByEmail(ctx context.Context, email string) (models.
 	return user, nil
 }
 
+func (s *Store) CreatePasswordShareLink(ctx context.Context, token string, entryID string, createdBy string, expiresAt time.Time) error {
+	if strings.TrimSpace(token) == "" {
+		return errors.New("token required")
+	}
+	entryUUID, err := uuid.Parse(entryID)
+	if err != nil {
+		return err
+	}
+	creatorUUID, err := uuid.Parse(createdBy)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, sqlCreatePasswordShareLink, token, entryUUID, creatorUUID, expiresAt)
+	return err
+}
+
+func (s *Store) GetPasswordShareLinkByToken(ctx context.Context, token string) (models.PasswordShareLink, error) {
+	var link models.PasswordShareLink
+	var entryID uuid.UUID
+	var createdBy uuid.UUID
+	err := s.pool.QueryRow(ctx, sqlGetPasswordShareLinkByToken, strings.TrimSpace(token)).Scan(&link.Token, &entryID, &createdBy, &link.CreatedAt, &link.ExpiresAt)
+	if err != nil {
+		return models.PasswordShareLink{}, err
+	}
+	link.EntryID = entryID.String()
+	link.CreatedBy = createdBy.String()
+	return link, nil
+}
+
+func (s *Store) GetPasswordForShare(ctx context.Context, cryptoSvc *crypto.Service, id string) (models.PasswordEntry, error) {
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return models.PasswordEntry{}, err
+	}
+	var entry models.PasswordEntry
+	var ownerEmail string
+	var passEnc []byte
+	var notesEnc []byte
+	var tags string
+	var groups string
+	err = s.pool.QueryRow(ctx, sqlGetPasswordForShare, uid).Scan(&entry.ID, &entry.UserID, &ownerEmail, &entry.Title, &entry.Username, &passEnc, &entry.URL, &notesEnc, &tags, &groups)
+	if err != nil {
+		return models.PasswordEntry{}, err
+	}
+	entry.OwnerEmail = ownerEmail
+	password, err := cryptoSvc.Decrypt(passEnc)
+	if err != nil {
+		return models.PasswordEntry{}, err
+	}
+	entry.Password = password
+	if len(notesEnc) > 0 {
+		notes, err := cryptoSvc.Decrypt(notesEnc)
+		if err != nil {
+			return models.PasswordEntry{}, err
+		}
+		entry.Notes = notes
+	}
+	entry.Tags = splitTags(tags)
+	entry.Groups = splitTags(groups)
+	return entry, nil
+}
+
 func (s *Store) ClearTagsForRecord(ctx context.Context, recordID string) (int64, error) {
 	uid, err := uuid.Parse(recordID)
 	if err != nil {

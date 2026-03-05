@@ -410,6 +410,32 @@ const (
 		ORDER BY u.email ASC
 	`
 
+	sqlCreatePasswordShareLink = `
+		INSERT INTO password_share_links (token, entry_id, created_by, expires_at)
+		VALUES ($1, $2, $3, $4)
+	`
+
+	sqlGetPasswordShareLinkByToken = `
+		SELECT token, entry_id, created_by, created_at, expires_at
+		FROM password_share_links
+		WHERE token = $1
+		  AND expires_at > NOW()
+	`
+
+	sqlGetPasswordForShare = `
+		SELECT p.id, p.user_id, owner.email, p.title, p.username, p.password_enc, p.url, p.notes_enc,
+			   COALESCE(string_agg(DISTINCT t.name, ','), '') AS tags,
+			   COALESCE(string_agg(DISTINCT g.name, ','), '') AS groups
+		FROM password_entries p
+		JOIN users owner ON owner.id = p.user_id
+		LEFT JOIN entry_tags et ON et.entry_id = p.id
+		LEFT JOIN tags t ON t.id = et.tag_id
+		LEFT JOIN group_entries ge ON ge.entry_id = p.id
+		LEFT JOIN groups g ON g.id = ge.group_id
+		WHERE p.id = $1
+		GROUP BY p.id, owner.email
+	`
+
 	sqlClearPasswordTagsByRecordID = `
 		DELETE FROM entry_tags WHERE entry_id = $1
 	`
