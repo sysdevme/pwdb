@@ -212,6 +212,23 @@ const (
 		WHERE singleton = TRUE
 	`
 
+	sqlUpsertControllerLink = `
+		INSERT INTO controller_links (id, slave_server_id, slave_endpoint, status, updated_at)
+		VALUES ($1, $2, $3, 'active', NOW())
+		ON CONFLICT (slave_server_id) DO UPDATE
+		SET slave_endpoint = EXCLUDED.slave_endpoint,
+		    status = 'active',
+		    updated_at = NOW()
+	`
+
+	sqlInsertControllerUpdateEvent = `
+		INSERT INTO controller_update_events (
+			event_id, master_server_id, vault_version, payload_hash, status, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, NOW())
+		ON CONFLICT (event_id) DO NOTHING
+	`
+
 	sqlCreateUser = `
 		INSERT INTO users (id, email, password_hash, master_password_hash, is_admin, status)
 		VALUES ($1, $2, $3, $4, $5, $6)

@@ -39,6 +39,17 @@
         height: 100%;
         display: block;
       }
+      .pm-mode-dot {
+        width: 1.5rem;
+        height: 1.5rem;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.72rem;
+        font-weight: 700;
+        line-height: 1;
+      }
     </style>
   </head>
   <body>
@@ -50,7 +61,13 @@
     {{ if and .CurrentUserEmail (ne .RequestPath "/login") (ne .RequestPath "/setup") }}
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
       <div class="container pm-site-frame">
-        <a class="navbar-brand" href="/">Password Manager</a>
+        <a class="navbar-brand d-flex align-items-center gap-2" href="/">
+          <span>Password Manager</span>
+          {{ if .ServerMode }}
+          <span class="pm-mode-dot badge {{ .ServerModeClass }}" title="Server mode {{ .ServerMode }}">{{ .ServerModeCode }}</span>
+          <span class="badge text-bg-secondary">{{ .ServerMode }}</span>
+          {{ end }}
+        </a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain" aria-controls="navMain" aria-expanded="false" aria-label="Toggle navigation">
           <span class="navbar-toggler-icon"></span>
         </button>

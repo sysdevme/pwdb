@@ -634,6 +634,41 @@ func (s *Store) GetServerProfile(ctx context.Context) (models.ServerProfile, err
 	return profile, nil
 }
 
+func (s *Store) UpsertControllerLink(ctx context.Context, slaveServerID string, slaveEndpoint string) error {
+	slaveServerID = strings.TrimSpace(slaveServerID)
+	slaveEndpoint = strings.TrimSpace(slaveEndpoint)
+	if slaveServerID == "" || slaveEndpoint == "" {
+		return errors.New("slave_server_id and slave_endpoint are required")
+	}
+	_, err := s.pool.Exec(ctx, sqlUpsertControllerLink, uuid.New(), slaveServerID, slaveEndpoint)
+	return err
+}
+
+func (s *Store) InsertControllerUpdateEvent(ctx context.Context, eventID string, masterServerID string, vaultVersion int64, payloadHash string, status string) (bool, error) {
+	eventID = strings.TrimSpace(eventID)
+	masterServerID = strings.TrimSpace(masterServerID)
+	payloadHash = strings.TrimSpace(payloadHash)
+	status = strings.TrimSpace(strings.ToLower(status))
+	if eventID == "" || masterServerID == "" {
+		return false, errors.New("event_id and master_server_id are required")
+	}
+	if vaultVersion <= 0 {
+		return false, errors.New("vault_version must be positive")
+	}
+	switch status {
+	case "":
+		status = "applied"
+	case "applied", "acked", "error":
+	default:
+		return false, errors.New("invalid event status")
+	}
+	tag, err := s.pool.Exec(ctx, sqlInsertControllerUpdateEvent, eventID, masterServerID, vaultVersion, nullIfEmpty(payloadHash), status)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (s *Store) CreateUser(ctx context.Context, user models.User) error {
 	id, err := parseOrNewUUID(user.ID)
 	if err != nil {

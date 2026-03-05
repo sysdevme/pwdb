@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -37,6 +39,30 @@ type uiSettings struct {
 	UnlockMinutes int
 	Firewall      bool
 	APIKey        string
+}
+
+type controllerPairRequest struct {
+	SlaveServerID string `json:"slave_server_id"`
+	SlaveEndpoint string `json:"slave_endpoint"`
+}
+
+type controllerSnapshotApplyRequest struct {
+	MasterServerID string `json:"master_server_id"`
+	MasterURL      string `json:"master_url"`
+	SnapshotVersion int64 `json:"snapshot_version"`
+}
+
+type controllerUpdateApplyRequest struct {
+	MasterServerID string `json:"master_server_id"`
+	EventID        string `json:"event_id"`
+	VaultVersion   int64  `json:"vault_version"`
+	PayloadHash    string `json:"payload_hash"`
+}
+
+type controllerUpdateAckRequest struct {
+	MasterServerID string `json:"master_server_id"`
+	EventID        string `json:"event_id"`
+	Status         string `json:"status"`
 }
 
 type Server struct {
@@ -79,6 +105,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/login", s.handleLogin)
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/setup", s.handleSetup)
+	mux.HandleFunc("/controller/pair", s.handleControllerPair)
+	mux.HandleFunc("/controller/snapshot/apply", s.handleControllerSnapshotApply)
+	mux.HandleFunc("/controller/update/apply", s.handleControllerUpdateApply)
+	mux.HandleFunc("/controller/update/ack", s.handleControllerUpdateAck)
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/passwords", s.handlePasswords)
 	mux.HandleFunc("/passwords/new", s.handlePasswordForm)
@@ -308,6 +338,181 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func decodeJSONBody(r *http.Request, dst any) error {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	return dec.Decode(dst)
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func (s *Server) authorizeController(w http.ResponseWriter, r *http.Request) bool {
+	expected := strings.TrimSpace(os.Getenv("CONTROLLER_SHARED_TOKEN"))
+	if expected == "" {
+		http.Error(w, "controller auth is not configured", http.StatusServiceUnavailable)
+		return false
+	}
+	got := strings.TrimSpace(r.Header.Get("X-Controller-Token"))
+	if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	return true
+}
+
+func (s *Server) handleControllerPair(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeController(w, r) {
+		return
+	}
+	profile, err := s.store.GetServerProfile(r.Context())
+	if err != nil {
+		http.Error(w, "server profile is not initialized", http.StatusConflict)
+		return
+	}
+	if profile.ServerMode != "AS-M" {
+		http.Error(w, "pairing is allowed only on AS-M", http.StatusConflict)
+		return
+	}
+	var req controllerPairRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.UpsertControllerLink(r.Context(), req.SlaveServerID, req.SlaveEndpoint); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":          "paired",
+		"master_mode":     profile.ServerMode,
+		"slave_server_id": strings.TrimSpace(req.SlaveServerID),
+	})
+}
+
+func (s *Server) handleControllerSnapshotApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeController(w, r) {
+		return
+	}
+	profile, err := s.store.GetServerProfile(r.Context())
+	if err != nil {
+		http.Error(w, "server profile is not initialized", http.StatusConflict)
+		return
+	}
+	if profile.ServerMode != "AS-S" {
+		http.Error(w, "snapshot apply is allowed only on AS-S", http.StatusConflict)
+		return
+	}
+	var req controllerSnapshotApplyRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	if req.SnapshotVersion <= 0 || strings.TrimSpace(req.MasterURL) == "" {
+		http.Error(w, "master_url and snapshot_version are required", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.SetServerProfile(r.Context(), models.ServerProfile{
+		ServerMode:      profile.ServerMode,
+		SyncStatus:      "await_updates",
+		LinkedMasterID:  strings.TrimSpace(req.MasterServerID),
+		LinkedMasterURL: strings.TrimSpace(req.MasterURL),
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":           "snapshot_applied",
+		"sync_status":      "await_updates",
+		"snapshot_version": req.SnapshotVersion,
+	})
+}
+
+func (s *Server) handleControllerUpdateApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeController(w, r) {
+		return
+	}
+	profile, err := s.store.GetServerProfile(r.Context())
+	if err != nil {
+		http.Error(w, "server profile is not initialized", http.StatusConflict)
+		return
+	}
+	if profile.ServerMode != "AS-S" {
+		http.Error(w, "update apply is allowed only on AS-S", http.StatusConflict)
+		return
+	}
+	var req controllerUpdateApplyRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	inserted, err := s.store.InsertControllerUpdateEvent(
+		r.Context(),
+		req.EventID,
+		req.MasterServerID,
+		req.VaultVersion,
+		req.PayloadHash,
+		"applied",
+	)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":        "accepted",
+		"event_id":      strings.TrimSpace(req.EventID),
+		"vault_version": req.VaultVersion,
+		"duplicate":     !inserted,
+	})
+}
+
+func (s *Server) handleControllerUpdateAck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeController(w, r) {
+		return
+	}
+	profile, err := s.store.GetServerProfile(r.Context())
+	if err != nil {
+		http.Error(w, "server profile is not initialized", http.StatusConflict)
+		return
+	}
+	if profile.ServerMode != "AS-M" {
+		http.Error(w, "update ack is allowed only on AS-M", http.StatusConflict)
+		return
+	}
+	var req controllerUpdateAckRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.EventID) == "" {
+		http.Error(w, "event_id is required", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":   "ack_received",
+		"event_id": strings.TrimSpace(req.EventID),
+	})
 }
 
 func (s *Server) handlePasswords(w http.ResponseWriter, r *http.Request) {
@@ -2200,6 +2405,17 @@ func (s *Server) renderWithUnlock(w http.ResponseWriter, r *http.Request, page s
 	data["Unlocked"] = s.isUnlocked(r)
 	data["UnlockSeconds"] = s.unlockRemainingSeconds(r)
 	data["RequestPath"] = r.URL.Path
+	if profile, err := s.store.GetServerProfile(r.Context()); err == nil {
+		data["ServerMode"] = profile.ServerMode
+		switch profile.ServerMode {
+		case "AS-M":
+			data["ServerModeCode"] = "M"
+			data["ServerModeClass"] = "text-bg-success"
+		case "AS-S":
+			data["ServerModeCode"] = "S"
+			data["ServerModeClass"] = "text-bg-warning"
+		}
+	}
 	if user, ok := s.currentUser(r); ok {
 		data["CurrentUserEmail"] = user.Email
 		data["IsAdmin"] = user.IsAdmin
@@ -2220,7 +2436,7 @@ func (s *Server) handleUnlockPage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		if strings.HasPrefix(path, "/static/") || path == "/login" || path == "/setup" || path == "/auth/biometric-token" || path == "/share/password" {
+		if strings.HasPrefix(path, "/static/") || strings.HasPrefix(path, "/controller/") || path == "/login" || path == "/setup" || path == "/auth/biometric-token" || path == "/share/password" {
 			next.ServeHTTP(w, r)
 			return
 		}
