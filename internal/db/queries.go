@@ -213,12 +213,27 @@ const (
 	`
 
 	sqlUpsertControllerLink = `
-		INSERT INTO controller_links (id, slave_server_id, slave_endpoint, status, updated_at)
-		VALUES ($1, $2, $3, 'active', NOW())
+		INSERT INTO controller_links (id, slave_server_id, slave_endpoint, status, last_handshake_at, updated_at)
+		VALUES ($1, $2, $3, 'active', NOW(), NOW())
 		ON CONFLICT (slave_server_id) DO UPDATE
 		SET slave_endpoint = EXCLUDED.slave_endpoint,
 		    status = 'active',
+		    last_handshake_at = NOW(),
 		    updated_at = NOW()
+	`
+
+	sqlTouchControllerLinkHandshake = `
+		UPDATE controller_links
+		SET status = $2,
+		    last_handshake_at = NOW(),
+		    updated_at = NOW()
+		WHERE slave_server_id = $1
+	`
+
+	sqlListControllerLinks = `
+		SELECT slave_server_id, slave_endpoint, status, last_handshake_at, created_at, updated_at
+		FROM controller_links
+		ORDER BY created_at DESC
 	`
 
 	sqlInsertControllerUpdateEvent = `

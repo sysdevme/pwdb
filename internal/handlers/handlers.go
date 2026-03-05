@@ -61,6 +61,7 @@ type controllerUpdateApplyRequest struct {
 
 type controllerUpdateAckRequest struct {
 	MasterServerID string `json:"master_server_id"`
+	SlaveServerID  string `json:"slave_server_id"`
 	EventID        string `json:"event_id"`
 	Status         string `json:"status"`
 }
@@ -508,6 +509,16 @@ func (s *Server) handleControllerUpdateAck(w http.ResponseWriter, r *http.Reques
 	if strings.TrimSpace(req.EventID) == "" {
 		http.Error(w, "event_id is required", http.StatusBadRequest)
 		return
+	}
+	linkStatus := "active"
+	if v := strings.ToLower(strings.TrimSpace(req.Status)); v == "error" || v == "failed" {
+		linkStatus = "disabled"
+	}
+	if strings.TrimSpace(req.SlaveServerID) != "" {
+		if err := s.store.TouchControllerLinkHandshake(r.Context(), req.SlaveServerID, linkStatus); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":   "ack_received",
@@ -1821,6 +1832,36 @@ type adminBackup struct {
 	Notes     []models.SecureNote    `json:"notes"`
 }
 
+func (s *Server) adminPageData(ctx context.Context, message string) (map[string]any, error) {
+	users, err := s.store.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	data := map[string]any{
+		"Title": "Admin",
+		"Users": users,
+	}
+	if message != "" {
+		data["Message"] = message
+	}
+	if profile, err := s.store.GetServerProfile(ctx); err == nil {
+		data["AdminServerProfile"] = profile
+		if links, err := s.store.ListControllerLinks(ctx); err == nil {
+			data["ControllerLinks"] = links
+		}
+	}
+	return data, nil
+}
+
+func (s *Server) renderAdminPage(w http.ResponseWriter, r *http.Request, message string) {
+	data, err := s.adminPageData(r.Context(), message)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderWithUnlock(w, r, "admin.html", data)
+}
+
 func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1831,15 +1872,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	users, err := s.store.ListUsers(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.renderWithUnlock(w, r, "admin.html", map[string]any{
-		"Title": "Admin",
-		"Users": users,
-	})
+	s.renderAdminPage(w, r, "")
 }
 
 func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -1891,16 +1924,7 @@ func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	users, err := s.store.ListUsers(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.renderWithUnlock(w, r, "admin.html", map[string]any{
-		"Title":   "Admin",
-		"Message": "User created.",
-		"Users":   users,
-	})
+	s.renderAdminPage(w, r, "User created.")
 }
 
 func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
@@ -1950,16 +1974,7 @@ func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	users, err := s.store.ListUsers(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.renderWithUnlock(w, r, "admin.html", map[string]any{
-		"Title":   "Admin",
-		"Message": "User updated.",
-		"Users":   users,
-	})
+	s.renderAdminPage(w, r, "User updated.")
 }
 
 func (s *Server) handleAdminClearRecordTags(w http.ResponseWriter, r *http.Request) {
@@ -1990,16 +2005,7 @@ func (s *Server) handleAdminClearRecordTags(w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	users, err := s.store.ListUsers(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.renderWithUnlock(w, r, "admin.html", map[string]any{
-		"Title":   "Admin",
-		"Users":   users,
-		"Message": fmt.Sprintf("Cleared %d tag links for record %s.", affected, recordID),
-	})
+	s.renderAdminPage(w, r, fmt.Sprintf("Cleared %d tag links for record %s.", affected, recordID))
 }
 
 func (s *Server) handleAdminClearRecordGroups(w http.ResponseWriter, r *http.Request) {
@@ -2030,16 +2036,7 @@ func (s *Server) handleAdminClearRecordGroups(w http.ResponseWriter, r *http.Req
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	users, err := s.store.ListUsers(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.renderWithUnlock(w, r, "admin.html", map[string]any{
-		"Title":   "Admin",
-		"Users":   users,
-		"Message": fmt.Sprintf("Cleared %d group links for record %s.", affected, recordID),
-	})
+	s.renderAdminPage(w, r, fmt.Sprintf("Cleared %d group links for record %s.", affected, recordID))
 }
 
 func (s *Server) handleAdminClearAllTags(w http.ResponseWriter, r *http.Request) {
@@ -2061,16 +2058,7 @@ func (s *Server) handleAdminClearAllTags(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	users, err := s.store.ListUsers(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.renderWithUnlock(w, r, "admin.html", map[string]any{
-		"Title":   "Admin",
-		"Users":   users,
-		"Message": fmt.Sprintf("Cleared tags table. Removed %d tag rows.", affected),
-	})
+	s.renderAdminPage(w, r, fmt.Sprintf("Cleared tags table. Removed %d tag rows.", affected))
 }
 
 func (s *Server) handleAdminClearAllGroups(w http.ResponseWriter, r *http.Request) {
@@ -2092,16 +2080,7 @@ func (s *Server) handleAdminClearAllGroups(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	users, err := s.store.ListUsers(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.renderWithUnlock(w, r, "admin.html", map[string]any{
-		"Title":   "Admin",
-		"Users":   users,
-		"Message": fmt.Sprintf("Cleared groups table. Removed %d group rows.", affected),
-	})
+	s.renderAdminPage(w, r, fmt.Sprintf("Cleared groups table. Removed %d group rows.", affected))
 }
 
 func (s *Server) handleAdminBackup(w http.ResponseWriter, r *http.Request) {
@@ -2209,16 +2188,7 @@ func (s *Server) handleAdminRestore(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	users, err := s.store.ListUsers(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.renderWithUnlock(w, r, "admin.html", map[string]any{
-		"Title":   "Admin",
-		"Message": fmt.Sprintf("Restored %d passwords and %d notes.", len(backup.Passwords), len(backup.Notes)),
-		"Users":   users,
-	})
+	s.renderAdminPage(w, r, fmt.Sprintf("Restored %d passwords and %d notes.", len(backup.Passwords), len(backup.Notes)))
 }
 
 func (s *Server) handleAdminRebuild(w http.ResponseWriter, r *http.Request) {
@@ -2283,16 +2253,7 @@ func (s *Server) handleAdminRebuild(w http.ResponseWriter, r *http.Request) {
 			rebuilt++
 		}
 	}
-	users, err := s.store.ListUsers(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.renderWithUnlock(w, r, "admin.html", map[string]any{
-		"Title":   "Admin",
-		"Message": fmt.Sprintf("Rebuilt %d items from import_raw.", rebuilt),
-		"Users":   users,
-	})
+	s.renderAdminPage(w, r, fmt.Sprintf("Rebuilt %d items from import_raw.", rebuilt))
 }
 
 func (s *Server) handleImport1Password(w http.ResponseWriter, r *http.Request) {

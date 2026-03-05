@@ -105,3 +105,12 @@ type ServerProfile struct {
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
+
+type ControllerLink struct {
+	SlaveServerID   string
+	SlaveEndpoint   string
+	Status          string
+	LastHandshakeAt time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}

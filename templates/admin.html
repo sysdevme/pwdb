@@ -113,6 +113,48 @@
   </div>
   <div class="card mt-4">
     <div class="card-body">
+      <h5 class="card-title">Controller Links</h5>
+      {{ if .AdminServerProfile }}
+      <div class="small text-muted mb-3">
+        Mode: <span class="fw-semibold">{{ .AdminServerProfile.ServerMode }}</span>,
+        Sync: <span class="fw-semibold">{{ .AdminServerProfile.SyncStatus }}</span>
+        {{ if .AdminServerProfile.LinkedMasterURL }},
+          Master: <span class="fw-semibold">{{ .AdminServerProfile.LinkedMasterURL }}</span>
+        {{ end }}
+      </div>
+      {{ end }}
+      {{ if .ControllerLinks }}
+      <div class="table-responsive">
+        <table class="table table-striped align-middle">
+          <thead>
+            <tr>
+              <th>Slave Server ID</th>
+              <th>Endpoint</th>
+              <th>Status</th>
+              <th>Last Handshake</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ range .ControllerLinks }}
+            <tr>
+              <td><code>{{ .SlaveServerID }}</code></td>
+              <td><code>{{ .SlaveEndpoint }}</code></td>
+              <td>
+                <span class="badge {{ if eq .Status "active" }}text-bg-success{{ else }}text-bg-secondary{{ end }}">{{ .Status }}</span>
+              </td>
+              <td>{{ .LastHandshakeAt.Format "2006-01-02 15:04:05" }}</td>
+            </tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+      {{ else }}
+      <div class="alert alert-secondary mb-0">No controller links yet.</div>
+      {{ end }}
+    </div>
+  </div>
+  <div class="card mt-4">
+    <div class="card-body">
       <h5 class="card-title">Data Cleanup</h5>
       <p class="text-muted">These operations are destructive. Record cleanup accepts a password or note UUID.</p>
       <div class="row g-3">

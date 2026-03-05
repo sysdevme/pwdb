@@ -644,6 +644,40 @@ func (s *Store) UpsertControllerLink(ctx context.Context, slaveServerID string, 
 	return err
 }
 
+func (s *Store) TouchControllerLinkHandshake(ctx context.Context, slaveServerID string, status string) error {
+	slaveServerID = strings.TrimSpace(slaveServerID)
+	status = strings.TrimSpace(strings.ToLower(status))
+	if slaveServerID == "" {
+		return errors.New("slave_server_id is required")
+	}
+	switch status {
+	case "":
+		status = "active"
+	case "active", "disabled":
+	default:
+		return errors.New("invalid controller link status")
+	}
+	_, err := s.pool.Exec(ctx, sqlTouchControllerLinkHandshake, slaveServerID, status)
+	return err
+}
+
+func (s *Store) ListControllerLinks(ctx context.Context) ([]models.ControllerLink, error) {
+	rows, err := s.pool.Query(ctx, sqlListControllerLinks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.ControllerLink
+	for rows.Next() {
+		var item models.ControllerLink
+		if err := rows.Scan(&item.SlaveServerID, &item.SlaveEndpoint, &item.Status, &item.LastHandshakeAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) InsertControllerUpdateEvent(ctx context.Context, eventID string, masterServerID string, vaultVersion int64, payloadHash string, status string) (bool, error) {
 	eventID = strings.TrimSpace(eventID)
 	masterServerID = strings.TrimSpace(masterServerID)
