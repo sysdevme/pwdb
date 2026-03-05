@@ -2,6 +2,27 @@
 <h1 class="h3 mb-3">Create Admin</h1>
 <form method="post" action="/setup">
   <div class="mb-3">
+    <label class="form-label d-block">Server Mode</label>
+    <div class="form-check">
+      <input class="form-check-input" type="radio" name="server_mode" id="modeMaster" value="AS-M" {{ if or (not .ServerMode) (eq .ServerMode "AS-M") }}checked{{ end }}>
+      <label class="form-check-label" for="modeMaster">AS-M (Master)</label>
+    </div>
+    <div class="form-check">
+      <input class="form-check-input" type="radio" name="server_mode" id="modeSlave" value="AS-S" {{ if eq .ServerMode "AS-S" }}checked{{ end }}>
+      <label class="form-check-label" for="modeSlave">AS-S (Slave)</label>
+    </div>
+    <div class="form-text">Master is authoritative. Slave receives snapshot and waits for updates.</div>
+  </div>
+  <div id="slaveFields" class="mb-3 d-none">
+    <label class="form-label">Linked Master URL</label>
+    <input type="url" name="linked_master_url" class="form-control" placeholder="https://master.example.com">
+    <div class="form-text">Required in AS-S mode.</div>
+  </div>
+  <div id="slaveFieldsID" class="mb-3 d-none">
+    <label class="form-label">Linked Master ID (optional)</label>
+    <input type="text" name="linked_master_id" class="form-control" placeholder="master-server-id">
+  </div>
+  <div class="mb-3">
     <label class="form-label">Email</label>
     <input type="email" name="email" class="form-control" required>
   </div>
@@ -15,4 +36,22 @@
   </div>
   <button class="btn btn-primary" type="submit">Create Admin</button>
 </form>
+<script>
+  (() => {
+    const master = document.getElementById("modeMaster");
+    const slave = document.getElementById("modeSlave");
+    const slaveFields = document.getElementById("slaveFields");
+    const slaveFieldsID = document.getElementById("slaveFieldsID");
+    const slaveURL = slaveFields ? slaveFields.querySelector("input[name='linked_master_url']") : null;
+    function syncMode() {
+      const isSlave = !!(slave && slave.checked);
+      if (slaveFields) slaveFields.classList.toggle("d-none", !isSlave);
+      if (slaveFieldsID) slaveFieldsID.classList.toggle("d-none", !isSlave);
+      if (slaveURL) slaveURL.required = isSlave;
+    }
+    if (master) master.addEventListener("change", syncMode);
+    if (slave) slave.addEventListener("change", syncMode);
+    syncMode();
+  })();
+</script>
 {{ end }}

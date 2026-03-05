@@ -96,3 +96,12 @@ type PasswordShareLink struct {
 	CreatedAt time.Time
 	ExpiresAt time.Time
 }
+
+type ServerProfile struct {
+	ServerMode     string
+	SyncStatus     string
+	LinkedMasterID string
+	LinkedMasterURL string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}

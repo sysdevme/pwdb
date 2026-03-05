@@ -193,6 +193,25 @@ const (
 		SELECT COUNT(*) FROM users
 	`
 
+	sqlUpsertServerProfile = `
+		INSERT INTO server_profile (
+			singleton, server_mode, sync_status, linked_master_id, linked_master_url, updated_at
+		)
+		VALUES (TRUE, $1, $2, $3, $4, NOW())
+		ON CONFLICT (singleton) DO UPDATE
+		SET server_mode = EXCLUDED.server_mode,
+		    sync_status = EXCLUDED.sync_status,
+		    linked_master_id = EXCLUDED.linked_master_id,
+		    linked_master_url = EXCLUDED.linked_master_url,
+		    updated_at = NOW()
+	`
+
+	sqlGetServerProfile = `
+		SELECT server_mode, sync_status, linked_master_id, linked_master_url, created_at, updated_at
+		FROM server_profile
+		WHERE singleton = TRUE
+	`
+
 	sqlCreateUser = `
 		INSERT INTO users (id, email, password_hash, master_password_hash, is_admin, status)
 		VALUES ($1, $2, $3, $4, $5, $6)

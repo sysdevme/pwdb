@@ -230,6 +230,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		s.renderWithUnlock(w, r, "setup.html", map[string]any{
 			"Title": "Create Admin",
+			"ServerMode": "AS-M",
 		})
 	case http.MethodPost:
 		if err := r.ParseForm(); err != nil {
@@ -239,12 +240,32 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		email := strings.TrimSpace(r.FormValue("email"))
 		loginPassword := r.FormValue("login_password")
 		masterPassword := r.FormValue("master_password")
+		serverMode := strings.ToUpper(strings.TrimSpace(r.FormValue("server_mode")))
+		linkedMasterID := strings.TrimSpace(r.FormValue("linked_master_id"))
+		linkedMasterURL := strings.TrimSpace(r.FormValue("linked_master_url"))
 		if loginPassword == "" || masterPassword == "" {
 			http.Error(w, "both passwords required", http.StatusBadRequest)
 			return
 		}
+		if email == "" {
+			http.Error(w, "email required", http.StatusBadRequest)
+			return
+		}
 		if loginPassword == masterPassword {
 			http.Error(w, "login and master passwords must differ", http.StatusBadRequest)
+			return
+		}
+		switch serverMode {
+		case "AS-M":
+			linkedMasterID = ""
+			linkedMasterURL = ""
+		case "AS-S":
+			if linkedMasterURL == "" {
+				http.Error(w, "linked master URL required for AS-S mode", http.StatusBadRequest)
+				return
+			}
+		default:
+			http.Error(w, "invalid server mode", http.StatusBadRequest)
 			return
 		}
 		loginHash, err := crypto.HashPassword(loginPassword)
@@ -254,6 +275,19 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		}
 		masterHash, err := crypto.HashPassword(masterPassword)
 		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		syncStatus := "standalone"
+		if serverMode == "AS-S" {
+			syncStatus = "await_updates"
+		}
+		if err := s.store.SetServerProfile(r.Context(), models.ServerProfile{
+			ServerMode:      serverMode,
+			SyncStatus:      syncStatus,
+			LinkedMasterID:  linkedMasterID,
+			LinkedMasterURL: linkedMasterURL,
+		}); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

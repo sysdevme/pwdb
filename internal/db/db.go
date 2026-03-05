@@ -568,6 +568,72 @@ func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+func normalizeServerMode(raw string) (string, error) {
+	mode := strings.TrimSpace(strings.ToUpper(raw))
+	switch mode {
+	case "AS-M", "AS-S":
+		return mode, nil
+	default:
+		return "", errors.New("invalid server mode")
+	}
+}
+
+func normalizeSyncStatus(raw string) (string, error) {
+	status := strings.TrimSpace(strings.ToLower(raw))
+	switch status {
+	case "":
+		return "standalone", nil
+	case "standalone", "await_updates", "syncing", "error":
+		return status, nil
+	default:
+		return "", errors.New("invalid sync status")
+	}
+}
+
+func (s *Store) SetServerProfile(ctx context.Context, profile models.ServerProfile) error {
+	mode, err := normalizeServerMode(profile.ServerMode)
+	if err != nil {
+		return err
+	}
+	status, err := normalizeSyncStatus(profile.SyncStatus)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(
+		ctx,
+		sqlUpsertServerProfile,
+		mode,
+		status,
+		nullIfEmpty(profile.LinkedMasterID),
+		nullIfEmpty(profile.LinkedMasterURL),
+	)
+	return err
+}
+
+func (s *Store) GetServerProfile(ctx context.Context) (models.ServerProfile, error) {
+	var profile models.ServerProfile
+	var linkedMasterID *string
+	var linkedMasterURL *string
+	err := s.pool.QueryRow(ctx, sqlGetServerProfile).Scan(
+		&profile.ServerMode,
+		&profile.SyncStatus,
+		&linkedMasterID,
+		&linkedMasterURL,
+		&profile.CreatedAt,
+		&profile.UpdatedAt,
+	)
+	if err != nil {
+		return models.ServerProfile{}, err
+	}
+	if linkedMasterID != nil {
+		profile.LinkedMasterID = *linkedMasterID
+	}
+	if linkedMasterURL != nil {
+		profile.LinkedMasterURL = *linkedMasterURL
+	}
+	return profile, nil
+}
+
 func (s *Store) CreateUser(ctx context.Context, user models.User) error {
 	id, err := parseOrNewUUID(user.ID)
 	if err != nil {
