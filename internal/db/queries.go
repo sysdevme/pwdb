@@ -244,6 +244,13 @@ const (
 		ON CONFLICT (event_id) DO NOTHING
 	`
 
+	sqlListControllerUpdateEvents = `
+		SELECT event_id, master_server_id, vault_version, payload_hash, status, created_at, updated_at
+		FROM controller_update_events
+		ORDER BY created_at DESC
+		LIMIT $1
+	`
+
 	sqlCreateUser = `
 		INSERT INTO users (id, email, password_hash, master_password_hash, is_admin, status)
 		VALUES ($1, $2, $3, $4, $5, $6)

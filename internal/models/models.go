@@ -114,3 +114,13 @@ type ControllerLink struct {
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
+
+type ControllerUpdateEvent struct {
+	EventID        string
+	MasterServerID string
+	VaultVersion   int64
+	PayloadHash    string
+	Status         string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}

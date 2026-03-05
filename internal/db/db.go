@@ -703,6 +703,30 @@ func (s *Store) InsertControllerUpdateEvent(ctx context.Context, eventID string,
 	return tag.RowsAffected() > 0, nil
 }
 
+func (s *Store) ListControllerUpdateEvents(ctx context.Context, limit int) ([]models.ControllerUpdateEvent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, sqlListControllerUpdateEvents, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.ControllerUpdateEvent
+	for rows.Next() {
+		var item models.ControllerUpdateEvent
+		var payloadHash *string
+		if err := rows.Scan(&item.EventID, &item.MasterServerID, &item.VaultVersion, &payloadHash, &item.Status, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if payloadHash != nil {
+			item.PayloadHash = *payloadHash
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) CreateUser(ctx context.Context, user models.User) error {
 	id, err := parseOrNewUUID(user.ID)
 	if err != nil {

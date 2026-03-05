@@ -1832,6 +1832,14 @@ type adminBackup struct {
 	Notes     []models.SecureNote    `json:"notes"`
 }
 
+type adminControllerLinkView struct {
+	SlaveServerID   string
+	SlaveEndpoint   string
+	Status          string
+	LastHandshakeAt time.Time
+	Health          string
+}
+
 func (s *Server) adminPageData(ctx context.Context, message string) (map[string]any, error) {
 	users, err := s.store.ListUsers(ctx)
 	if err != nil {
@@ -1846,8 +1854,37 @@ func (s *Server) adminPageData(ctx context.Context, message string) (map[string]
 	}
 	if profile, err := s.store.GetServerProfile(ctx); err == nil {
 		data["AdminServerProfile"] = profile
-		if links, err := s.store.ListControllerLinks(ctx); err == nil {
-			data["ControllerLinks"] = links
+		if profile.ServerMode == "AS-M" {
+			if links, err := s.store.ListControllerLinks(ctx); err == nil {
+				now := time.Now()
+				var viewLinks []adminControllerLinkView
+				for _, link := range links {
+					health := "active"
+					if link.Status != "active" {
+						health = "offline"
+					} else {
+						age := now.Sub(link.LastHandshakeAt)
+						if age > 5*time.Minute {
+							health = "offline"
+						} else if age > 90*time.Second {
+							health = "stale"
+						}
+					}
+					viewLinks = append(viewLinks, adminControllerLinkView{
+						SlaveServerID:   link.SlaveServerID,
+						SlaveEndpoint:   link.SlaveEndpoint,
+						Status:          link.Status,
+						LastHandshakeAt: link.LastHandshakeAt,
+						Health:          health,
+					})
+				}
+				data["ControllerLinks"] = viewLinks
+			}
+		}
+		if profile.ServerMode == "AS-S" {
+			if events, err := s.store.ListControllerUpdateEvents(ctx, 50); err == nil {
+				data["ControllerUpdateEvents"] = events
+			}
 		}
 	}
 	return data, nil

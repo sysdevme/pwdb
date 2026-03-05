@@ -131,6 +131,7 @@
               <th>Slave Server ID</th>
               <th>Endpoint</th>
               <th>Status</th>
+              <th>Health</th>
               <th>Last Handshake</th>
             </tr>
           </thead>
@@ -142,6 +143,9 @@
               <td>
                 <span class="badge {{ if eq .Status "active" }}text-bg-success{{ else }}text-bg-secondary{{ end }}">{{ .Status }}</span>
               </td>
+              <td>
+                <span class="badge {{ if eq .Health "active" }}text-bg-success{{ else if eq .Health "stale" }}text-bg-warning{{ else }}text-bg-danger{{ end }}">{{ .Health }}</span>
+              </td>
               <td>{{ .LastHandshakeAt.Format "2006-01-02 15:04:05" }}</td>
             </tr>
             {{ end }}
@@ -150,6 +154,40 @@
       </div>
       {{ else }}
       <div class="alert alert-secondary mb-0">No controller links yet.</div>
+      {{ end }}
+      {{ if and .AdminServerProfile (eq .AdminServerProfile.ServerMode "AS-S") }}
+      <hr class="my-4">
+      <h6>Incoming Controller Events</h6>
+      {{ if .ControllerUpdateEvents }}
+      <div class="table-responsive">
+        <table class="table table-striped align-middle">
+          <thead>
+            <tr>
+              <th>Event ID</th>
+              <th>Master ID</th>
+              <th>Vault Version</th>
+              <th>Status</th>
+              <th>Received</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ range .ControllerUpdateEvents }}
+            <tr>
+              <td><code>{{ .EventID }}</code></td>
+              <td><code>{{ .MasterServerID }}</code></td>
+              <td>{{ .VaultVersion }}</td>
+              <td>
+                <span class="badge {{ if eq .Status "applied" }}text-bg-success{{ else if eq .Status "acked" }}text-bg-primary{{ else }}text-bg-danger{{ end }}">{{ .Status }}</span>
+              </td>
+              <td>{{ .CreatedAt.Format "2006-01-02 15:04:05" }}</td>
+            </tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+      {{ else }}
+      <div class="alert alert-secondary mb-0">No incoming controller events yet.</div>
+      {{ end }}
       {{ end }}
     </div>
   </div>
