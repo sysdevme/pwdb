@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,14 +17,19 @@ import (
 )
 
 func main() {
-	addr := envOr("APP_ADDR", ":8443")
+	addr := envOr("APP_ADDR", ":8080")
 	master := os.Getenv("MASTER_PASSWORD")
 	if master == "" {
 		log.Println("warning: MASTER_PASSWORD not set")
 	}
-	certFile, keyFile, err := resolveTLSFiles()
-	if err != nil {
-		log.Fatalf("tls config: %v", err)
+	tlsEnabled := envBoolOr("APP_TLS", false)
+	var certFile, keyFile string
+	var err error
+	if tlsEnabled {
+		certFile, keyFile, err = resolveTLSFiles()
+		if err != nil {
+			log.Fatalf("tls config: %v", err)
+		}
 	}
 
 	ctx := context.Background()
@@ -48,8 +54,16 @@ func main() {
 		Handler:           server.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	log.Printf("listening on https://0.0.0.0%s", addr)
-	if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if tlsEnabled {
+		log.Printf("listening on https://0.0.0.0%s", addr)
+		if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+		return
+	}
+
+	log.Printf("listening on http://0.0.0.0%s", addr)
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
@@ -59,6 +73,18 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envBoolOr(key string, fallback bool) bool {
+	value := stringsTrim(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func waitForDB(ctx context.Context, store *db.Store) error {

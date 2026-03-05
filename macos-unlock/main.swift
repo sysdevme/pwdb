@@ -12,8 +12,8 @@ struct Config {
 
     init() {
         let env = ProcessInfo.processInfo.environment["PM_SERVER_URL"]
-            ?? "https://127.0.0.1:8443/auth/biometric-token"
-        self.tokenURL = URL(string: env) ?? URL(string: "https://127.0.0.1:8443/auth/biometric-token")!
+            ?? "http://127.0.0.1:8080/auth/biometric-token"
+        self.tokenURL = URL(string: env) ?? URL(string: "http://127.0.0.1:8080/auth/biometric-token")!
         self.userEmail = ProcessInfo.processInfo.environment["PM_USER_EMAIL"] ?? ""
     }
 }
@@ -156,7 +156,7 @@ func serve(config: Config) throws {
             }
 
             func respond(status: Int, body: String) {
-                let originValue = originAllowed(origin) ? origin : "https://localhost:8443"
+                let originValue = originAllowed(origin) ? origin : "http://localhost:8080"
                 let response = """
 HTTP/1.1 \(status) OK\r
 Access-Control-Allow-Origin: \(originValue)\r
