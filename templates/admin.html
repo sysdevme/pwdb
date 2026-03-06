@@ -46,68 +46,15 @@
   </div>
   <div class="card mt-4">
     <div class="card-body">
-      <h5 class="card-title">Create User</h5>
-      <p class="text-muted">New users are created in pending status and become active after their first successful login.</p>
-      <form method="post" action="/admin/users">
-        <div class="mb-3">
-          <label class="form-label">Email</label>
-          <input type="email" name="email" class="form-control" required>
-        </div>
-        <div class="mb-3">
-          <label class="form-label">Login Password</label>
-          <input type="password" name="login_password" class="form-control" required>
-        </div>
-        <div class="mb-3">
-          <label class="form-label">Master Password</label>
-          <input type="password" name="master_password" class="form-control" required>
-        </div>
-        <button class="btn btn-outline-primary" type="submit">Create User</button>
-      </form>
-    </div>
-  </div>
-  <div class="card mt-4">
-    <div class="card-body">
-      <h5 class="card-title">Users</h5>
-      <div class="table-responsive">
-        <table class="table table-striped align-middle">
-          <thead>
-            <tr>
-              <th>Email</th>
-              <th>Status</th>
-              <th>Role</th>
-              <th>Created</th>
-              <th>Update Passwords</th>
-            </tr>
-          </thead>
-          <tbody>
-            {{ if .Users }}
-              {{ range .Users }}
-                <tr>
-                  <td>{{ .Email }}</td>
-                  <td><span class="badge {{ if eq .Status "active" }}text-bg-success{{ else }}text-bg-secondary{{ end }}">{{ .Status }}</span></td>
-                  <td>{{ if .IsAdmin }}Admin{{ else }}User{{ end }}</td>
-                  <td>{{ .CreatedAt.Format "2006-01-02" }}</td>
-                  <td>
-                    <form method="post" action="/admin/users/update" class="row g-2">
-                      <input type="hidden" name="user_id" value="{{ .ID }}">
-                      <div class="col-md-4">
-                        <input type="password" name="login_password" class="form-control" placeholder="Login password" required>
-                      </div>
-                      <div class="col-md-4">
-                        <input type="password" name="master_password" class="form-control" placeholder="Master password" required>
-                      </div>
-                      <div class="col-md-4">
-                        <button class="btn btn-outline-secondary w-100" type="submit">Update</button>
-                      </div>
-                    </form>
-                  </td>
-                </tr>
-              {{ end }}
-            {{ else }}
-              <tr><td colspan="5" class="text-muted">No users</td></tr>
-            {{ end }}
-          </tbody>
-        </table>
+      <h5 class="card-title mb-3">Users</h5>
+      <div class="dropdown">
+        <button class="btn btn-outline-primary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+          Admin -> User
+        </button>
+        <ul class="dropdown-menu">
+          <li><button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#createUserModal">Create</button></li>
+          <li><button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#listUsersModal">List</button></li>
+        </ul>
       </div>
     </div>
   </div>
@@ -143,6 +90,87 @@
             <div class="small text-muted mb-2">Removes all groups and all group links for all records.</div>
             <button class="btn btn-danger btn-sm" type="submit">Clear All Groups</button>
           </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="modal fade" id="createUserModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Create User</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted">New users are created in pending status and become active after their first successful login.</p>
+          <form method="post" action="/admin/users">
+            <div class="mb-3">
+              <label class="form-label">Email</label>
+              <input type="email" name="email" class="form-control" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Login Password</label>
+              <input type="password" name="login_password" class="form-control" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Master Password</label>
+              <input type="password" name="master_password" class="form-control" required>
+            </div>
+            <button class="btn btn-outline-primary" type="submit">Create User</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="modal fade" id="listUsersModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Users</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="table-responsive">
+            <table class="table table-striped align-middle">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Status</th>
+                  <th>Role</th>
+                  <th>Created</th>
+                  <th>Update Passwords</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{ if .Users }}
+                  {{ range .Users }}
+                    <tr>
+                      <td>{{ .Email }}</td>
+                      <td><span class="badge {{ if eq .Status "active" }}text-bg-success{{ else }}text-bg-secondary{{ end }}">{{ .Status }}</span></td>
+                      <td>{{ if .IsAdmin }}Admin{{ else }}User{{ end }}</td>
+                      <td>{{ .CreatedAt.Format "2006-01-02" }}</td>
+                      <td>
+                        <form method="post" action="/admin/users/update" class="row g-2">
+                          <input type="hidden" name="user_id" value="{{ .ID }}">
+                          <div class="col-md-4">
+                            <input type="password" name="login_password" class="form-control" placeholder="Login password" required>
+                          </div>
+                          <div class="col-md-4">
+                            <input type="password" name="master_password" class="form-control" placeholder="Master password" required>
+                          </div>
+                          <div class="col-md-4">
+                            <button class="btn btn-outline-secondary w-100" type="submit">Update</button>
+                          </div>
+                        </form>
+                      </td>
+                    </tr>
+                  {{ end }}
+                {{ else }}
+                  <tr><td colspan="5" class="text-muted">No users</td></tr>
+                {{ end }}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
