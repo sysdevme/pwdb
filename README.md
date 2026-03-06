@@ -68,6 +68,12 @@ Required for controller API usage:
 `CONTROLLER_SHARED_TOKEN` is still required for legacy `/controller/*` relay endpoints.
 `CONTROLLER_MASTER_KEY` is required for `/controller/auth/bootstrap`.
 
+Optional for admin-triggered service restart:
+
+- `UI_SERVICE_RESTART_ENABLED` (`true`/`false`)
+- `UI_SERVICE_RESTART_COMMAND` (executable to run)
+- `UI_SERVICE_RESTART_ARGS` (space-separated args)
+
 ## Setup
 
 ```powershell
@@ -108,6 +114,10 @@ Admin page shows:
 - Last handshake timestamp
 - Controller registry list with `Approved` / `Non-approved` state
 - Approve / Non-approve actions for each controller
+- Users submenu with dialog actions:
+  - `Admin -> User -> Create`
+  - `Admin -> User -> List`
+- Optional `Restart Service` action (only if UI restart env vars are enabled)
 
 Health thresholds:
 

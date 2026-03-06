@@ -8,12 +8,15 @@ import (
 	"encoding/hex"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -37,6 +40,7 @@ const (
 	defaultUnlockMinutes = 5
 	controllerHealthcheckInterval = 30 * time.Second
 	controllerHealthcheckTimeout  = 5 * time.Second
+	serviceRestartTriggerDelay    = 500 * time.Millisecond
 )
 
 type uiSettings struct {
@@ -118,6 +122,28 @@ func NewServer(templates *template.Template, store *db.Store, cryptoSvc *crypto.
 	return srv
 }
 
+func serviceRestartCommandParts() ([]string, error) {
+	command := strings.TrimSpace(os.Getenv("UI_SERVICE_RESTART_COMMAND"))
+	if command == "" {
+		return nil, errors.New("ui service restart command is not configured")
+	}
+	args := strings.TrimSpace(os.Getenv("UI_SERVICE_RESTART_ARGS"))
+	parts := []string{command}
+	if args != "" {
+		parts = append(parts, strings.Fields(args)...)
+	}
+	return parts, nil
+}
+
+func isUIServiceRestartEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("UI_SERVICE_RESTART_ENABLED")))
+	if v != "1" && v != "true" && v != "yes" && v != "on" {
+		return false
+	}
+	_, err := serviceRestartCommandParts()
+	return err == nil
+}
+
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	staticFS := http.FileServer(http.Dir("static"))
@@ -177,6 +203,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/admin/users/update", s.handleAdminUpdateUser)
 	mux.HandleFunc("/admin/controllers/status", s.handleAdminSetControllerStatus)
 	mux.HandleFunc("/admin/controller-links/cleanup", s.handleAdminCleanupControllerLinks)
+	mux.HandleFunc("/admin/service/restart", s.handleAdminServiceRestart)
 	mux.HandleFunc("/admin/records/clear-tags", s.handleAdminClearRecordTags)
 	mux.HandleFunc("/admin/records/clear-groups", s.handleAdminClearRecordGroups)
 	mux.HandleFunc("/admin/tags/clear-all", s.handleAdminClearAllTags)
@@ -2121,6 +2148,7 @@ func (s *Server) adminPageData(ctx context.Context, message string) (map[string]
 	data := map[string]any{
 		"Title": "Admin",
 		"Users": users,
+		"ServiceRestartEnabled": isUIServiceRestartEnabled(),
 	}
 	if message != "" {
 		data["Message"] = message
@@ -2360,6 +2388,42 @@ func (s *Server) handleAdminCleanupControllerLinks(w http.ResponseWriter, r *htt
 		return
 	}
 	s.renderAdminPage(w, r, fmt.Sprintf("Controller links cleanup complete. Removed %d duplicate rows.", removed))
+}
+
+func (s *Server) handleAdminServiceRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok || !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if !isUIServiceRestartEnabled() {
+		http.Error(w, "service restart from UI is not enabled", http.StatusForbidden)
+		return
+	}
+	parts, err := serviceRestartCommandParts()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	go func(args []string) {
+		time.Sleep(serviceRestartTriggerDelay)
+		cmd := exec.Command(args[0], args[1:]...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("ui service restart failed: %v, output=%s", err, strings.TrimSpace(string(out)))
+			return
+		}
+		log.Printf("ui service restart command executed: %s", strings.Join(args, " "))
+	}(parts)
+	s.renderAdminPage(w, r, "Service restart was requested.")
 }
 
 func (s *Server) handleAdminClearRecordTags(w http.ResponseWriter, r *http.Request) {
