@@ -67,8 +67,13 @@
               <ul class="dropdown-menu">
                 <li><a class="dropdown-item" href="/admin">Dashboard</a></li>
                 <li><hr class="dropdown-divider"></li>
-                <li><a class="dropdown-item" href="/admin?users=create">Users -> Create</a></li>
-                <li><a class="dropdown-item" href="/admin?users=list">Users -> List</a></li>
+                <li class="dropend">
+                  <a class="dropdown-item dropdown-toggle" href="#" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">Users</a>
+                  <ul class="dropdown-menu">
+                    <li><a class="dropdown-item" href="/admin?users=create">Create</a></li>
+                    <li><a class="dropdown-item" href="/admin?users=list">List</a></li>
+                  </ul>
+                </li>
               </ul>
             </li>
             {{ end }}
