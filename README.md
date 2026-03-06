@@ -1,85 +1,147 @@
-# PWDB Unified Branch (v3 + v4)
+# Password Manager (Go) - Unified README
 
-This branch combines the `v3` user-facing functionality and the `v4` master/slave + controller work.
+Default development branch: `v4`.
 
-## Branch status
+This repository now combines:
 
-- Base: unified development on top of `v4`
-- Includes: `v3` UI/UX and admin refinements
-- Target: one active branch instead of parallel `v3`/`v4` drift
+- Core application features from `v3`
+- Master/slave + controller work from `v4`
 
-## Experimental section: master/slave + controller (in development)
+## Security notice
 
-The distributed topology is still under active development and should be treated as experimental.
+This project is intended for development, lab testing, and self-hosted trusted environments.
+It is not production-ready and should not be exposed directly to the public internet without additional hardening.
 
-- Server modes:
-  - `AS-M` (master)
-  - `AS-S` (slave)
-- Controller registry onboarding:
-  - bootstrap registers controller identity
-  - unapproved controllers receive pending onboarding response
-  - admin approval required for operational token
-- Master/slave telemetry in Admin:
-  - controller links + health + handshake timestamps
-  - controller registry approval state
-  - incoming controller events on slave
-- Current transport/auth model is development-oriented (`HTTP + JSON`, shared token + master key).
+## What the project includes
 
-Do not treat this topology as production-ready yet.
+- PostgreSQL storage
+- Dockerized app + DB
+- Web UI built with Bootstrap 5
+- Password and secure note vaults
+- Tags/groups organization
+- Multi-user admin/user lifecycle
+- Sharing between active users
+- Server-side crypto with Argon2id + AES-GCM
+- Optional distributed topology (`AS-M`/`AS-S`) via controller APIs (experimental)
 
-## Core application features
+## Quick start
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+App: `http://localhost:8080`
+
+First setup:
+
+- `http://localhost:8080/setup`
+
+Login:
+
+- `http://localhost:8080/login`
+
+## Core features (stable app surface)
 
 - Password and secure note CRUD
-- Tags/groups management and detail views
-- Sharing with other active users
-- Search + pagination on list pages
-- Timed unlock sessions + manual lock
-- Per-user settings and account credential updates
+- Tags and groups with detail pages
+- Search filters and pagination on list pages
+- Sharing items with other active users (shared items are recipient read-only)
+- Pending -> active user lifecycle on first successful login
+- Timed unlock session with manual lock
+- Account page for user credential updates
 - Admin backup/restore and cleanup tools
-- Admin Users navigation:
+- 1Password 7 `.1pif` import + import issue tracking
+- Optional macOS biometric helper flow; Windows falls back to password unlock
+- Admin users navigation:
   - `Admin -> Users -> Create` (dedicated page)
   - `Admin -> Users -> List` (dedicated page)
 
+## Experimental: master/slave + controller (under development)
+
+The distributed topology is experimental.
+Expect protocol/schema changes while development continues.
+
+Current design:
+
+- Setup mode:
+  - `AS-M` (master)
+  - `AS-S` (slave)
+- Controller onboarding:
+  - Bootstrap registers/updates controller identity
+  - Unapproved controller receives pending onboarding response
+  - Admin approval is required before operational token is issued
+- Admin telemetry:
+  - Master: controller links, health, last handshake, registry approval state
+  - Slave: incoming controller events
+- Periodic master -> slave health checks
+
+Current protocol endpoints:
+
+- Controller -> Master:
+  - `POST /controller/pair`
+  - `POST /controller/update/ack`
+- Controller -> Slave:
+  - `POST /controller/snapshot/apply`
+  - `POST /controller/update/apply`
+- Master -> Slave:
+  - `GET /controller/health`
+
 ## Environment
 
-Copy `.env.example` to `.env`.
+Copy `.env.example` to `.env` and adjust values.
 
-Important variables for controller flows:
+Important variables:
+
+- `MASTER_PASSWORD`
+- `DATABASE_URL`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `POSTGRES_DB`
+- `APP_ADDR`
+
+Controller-related variables:
 
 - `CONTROLLER_SHARED_TOKEN`
 - `CONTROLLER_MASTER_KEY`
 
-Optional admin service restart variables:
+Optional UI service restart controls:
 
 - `UI_SERVICE_RESTART_ENABLED`
 - `UI_SERVICE_RESTART_COMMAND`
 - `UI_SERVICE_RESTART_ARGS`
 
-## Run
+## Local dev scripts
 
-```powershell
-cd E:\pwdb-main
-docker compose up --build -d
-```
+Local helper scripts (for example under `scripts/`) may exist in your environment but are intentionally not part of the tracked repository state.
+Keep/customize them per environment.
 
-Setup URL:
+## Migrations for distributed mode
 
-- `http://<host>:8080/setup`
+- `010_server_profile.sql`
+- `011_controller_links.sql`
+- `012_controller_update_events.sql`
+- `013_controller_links_handshake.sql`
+- `014_controller_registry.sql`
 
-## Security notice
-
-This project contains experimental controller/distributed capabilities.
-Use in trusted environments only; avoid public exposure until protocol hardening is complete.
-
-## Fixed bugs (recent)
+## Recent fixed bugs
 
 <details>
 <summary>Open fixed bugs list</summary>
 
-- Fixed duplicate slave rows in master `Controller Links` for same endpoint re-registration.
-- Added admin cleanup action: `Cleanup Duplicate Endpoints`.
-- Added periodic master-to-slave health checks (`GET /controller/health`).
-- Enforced onboarding approval before issuing operational controller token.
-- Reworked Admin Users submenu to open dedicated pages (no dashboard modal race).
+- Duplicate slave rows in `Controller Links` for same endpoint re-registration.
+- Missing cleanup path for existing duplicates (`Cleanup Duplicate Endpoints` action).
+- Link freshness drift addressed with periodic health checks (`GET /controller/health`).
+- Unapproved controllers no longer receive operational token on first bootstrap.
+- Admin Users submenu flow changed to dedicated pages (removed dashboard modal race).
 
 </details>
+
+## Security limitations
+
+- No default TLS/HTTPS termination inside app container
+- No mTLS for controller endpoints yet
+- Shared-token based controller auth model still in transition
+- No built-in rate limiting/brute-force controls for controller APIs
+
+If deploying beyond local lab use, place behind a hardened reverse proxy with HTTPS and apply additional auth/rate-limit controls.
