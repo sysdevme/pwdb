@@ -142,6 +142,9 @@ Implemented:
 - Token-based controller auth
 - Admin telemetry for master/slave controller state
 - Periodic master-to-slave health checks for linked controllers
+- Duplicate controller-link endpoint cleanup:
+  - Automatic dedupe during pair/upsert
+  - Admin cleanup action for existing duplicates
 - Registry onboarding flow:
   - Bootstrap registers controller identity
   - Unapproved controllers receive pending onboarding response (no operational token)
@@ -165,6 +168,18 @@ Current limitations:
 - Controller auth is shared-token based (no mTLS yet)
 - Default local/development deployment may run over plain HTTP
 - No rate-limiting/brute-force controls for controller endpoints yet
+
+## Fixed bugs
+
+<details>
+<summary>Open fixed bugs list</summary>
+
+- Fixed duplicate slave rows in master `Controller Links` when same endpoint was re-registered with a different `slave_id`.
+- Fixed missing cleanup path by adding admin action: `Cleanup Duplicate Endpoints`.
+- Fixed link freshness drift by adding periodic master-to-slave health checks (`GET /controller/health`).
+- Fixed onboarding flow so unapproved controllers no longer receive operational token on first bootstrap.
+
+</details>
 
 ## Branch and release context
 

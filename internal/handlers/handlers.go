@@ -176,6 +176,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/admin/users", s.handleAdminCreateUser)
 	mux.HandleFunc("/admin/users/update", s.handleAdminUpdateUser)
 	mux.HandleFunc("/admin/controllers/status", s.handleAdminSetControllerStatus)
+	mux.HandleFunc("/admin/controller-links/cleanup", s.handleAdminCleanupControllerLinks)
 	mux.HandleFunc("/admin/records/clear-tags", s.handleAdminClearRecordTags)
 	mux.HandleFunc("/admin/records/clear-groups", s.handleAdminClearRecordGroups)
 	mux.HandleFunc("/admin/tags/clear-all", s.handleAdminClearAllTags)
@@ -2333,6 +2334,32 @@ func (s *Server) handleAdminSetControllerStatus(w http.ResponseWriter, r *http.R
 		return
 	}
 	s.renderAdminPage(w, r, "Controller set to non-approved.")
+}
+
+func (s *Server) handleAdminCleanupControllerLinks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok || !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	removed, err := s.store.CleanupControllerLinkDuplicateEndpoints(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if removed == 0 {
+		s.renderAdminPage(w, r, "Controller links cleanup complete. No duplicates found.")
+		return
+	}
+	s.renderAdminPage(w, r, fmt.Sprintf("Controller links cleanup complete. Removed %d duplicate rows.", removed))
 }
 
 func (s *Server) handleAdminClearRecordTags(w http.ResponseWriter, r *http.Request) {

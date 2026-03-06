@@ -678,6 +678,14 @@ func (s *Store) ListControllerLinks(ctx context.Context) ([]models.ControllerLin
 	return out, rows.Err()
 }
 
+func (s *Store) CleanupControllerLinkDuplicateEndpoints(ctx context.Context) (int64, error) {
+	tag, err := s.pool.Exec(ctx, sqlCleanupControllerLinkDuplicateEndpoints)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (s *Store) InsertControllerUpdateEvent(ctx context.Context, eventID string, masterServerID string, vaultVersion int64, payloadHash string, status string) (bool, error) {
 	eventID = strings.TrimSpace(eventID)
 	masterServerID = strings.TrimSpace(masterServerID)

@@ -213,6 +213,11 @@ const (
 	`
 
 	sqlUpsertControllerLink = `
+		WITH cleaned AS (
+			DELETE FROM controller_links
+			WHERE slave_endpoint = $3
+			  AND slave_server_id <> $2
+		)
 		INSERT INTO controller_links (id, slave_server_id, slave_endpoint, status, last_handshake_at, updated_at)
 		VALUES ($1, $2, $3, 'active', NOW(), NOW())
 		ON CONFLICT (slave_server_id) DO UPDATE
@@ -220,6 +225,16 @@ const (
 		    status = 'active',
 		    last_handshake_at = NOW(),
 		    updated_at = NOW()
+	`
+
+	sqlCleanupControllerLinkDuplicateEndpoints = `
+		DELETE FROM controller_links c1
+		USING controller_links c2
+		WHERE c1.slave_endpoint = c2.slave_endpoint
+		  AND (
+			c1.updated_at < c2.updated_at
+			OR (c1.updated_at = c2.updated_at AND c1.id::text < c2.id::text)
+		  )
 	`
 
 	sqlTouchControllerLinkHandshake = `

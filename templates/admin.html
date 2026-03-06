@@ -114,6 +114,11 @@
   <div class="card mt-4">
     <div class="card-body">
       <h5 class="card-title">Controller Links</h5>
+      {{ if and .AdminServerProfile (eq .AdminServerProfile.ServerMode "AS-M") }}
+      <form method="post" action="/admin/controller-links/cleanup" class="mb-3">
+        <button class="btn btn-sm btn-outline-secondary" type="submit">Cleanup Duplicate Endpoints</button>
+      </form>
+      {{ end }}
       {{ if .AdminServerProfile }}
       <div class="small text-muted mb-3">
         Mode: <span class="fw-semibold">{{ .AdminServerProfile.ServerMode }}</span>,
