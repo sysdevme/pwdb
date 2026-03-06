@@ -360,7 +360,6 @@
           }
           const modalEl = document.getElementById(modalId);
           if (!modalEl) {
-            window.location.href = "/admin?users=" + encodeURIComponent(action);
             return;
           }
           bootstrap.Modal.getOrCreateInstance(modalEl).show();
@@ -375,6 +374,12 @@
             openUsersModalAction(action);
           });
         });
+        if (window.location.pathname === "/admin") {
+          const action = new URLSearchParams(window.location.search).get("users");
+          if (action === "create" || action === "list") {
+            openUsersModalAction(action);
+          }
+        }
       })();
       (function () {
         function hashSeed(seed) {
