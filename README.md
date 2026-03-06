@@ -1,198 +1,85 @@
-# PWDB v4 (Master/Slave + Controller Draft)
+# PWDB Unified Branch (v3 + v4)
 
-This README is specific to the `v4` branch.
-It documents the current development topology and the controller integration state.
+This branch combines the `v3` user-facing functionality and the `v4` master/slave + controller work.
 
-## EXPERIMENTAL STATUS (READ FIRST)
+## Branch status
 
-This branch is **experimental and unstable**.
+- Base: unified development on top of `v4`
+- Includes: `v3` UI/UX and admin refinements
+- Target: one active branch instead of parallel `v3`/`v4` drift
 
-- APIs, schema, and behavior can change without backward compatibility.
-- Data formats and replication behavior are not finalized.
-- Failures, edge-case bugs, and manual recovery may be required.
-- Use for testing/lab only, not production workloads.
+## Experimental section: master/slave + controller (in development)
 
-## What v4 adds
+The distributed topology is still under active development and should be treated as experimental.
 
-- Server bootstrap mode during setup:
+- Server modes:
   - `AS-M` (master)
   - `AS-S` (slave)
-- Server profile persistence (`server_profile`)
-- Controller HTTP endpoints (dev mode over `http`)
-- Admin controller visibility:
-  - Master: controller links + health + last handshake + registry approval state
-  - Slave: incoming controller update events
+- Controller registry onboarding:
+  - bootstrap registers controller identity
+  - unapproved controllers receive pending onboarding response
+  - admin approval required for operational token
+- Master/slave telemetry in Admin:
+  - controller links + health + handshake timestamps
+  - controller registry approval state
+  - incoming controller events on slave
+- Current transport/auth model is development-oriented (`HTTP + JSON`, shared token + master key).
 
-## Topology (development)
+Do not treat this topology as production-ready yet.
 
-- `pwdb-main` can run as master or slave
-- `pwdb-controller` is the relay/orchestrator
-- Communication is currently `HTTP + JSON`
-- Legacy access control for relay endpoints uses `X-Controller-Token`
-- Controller registry onboarding uses `CONTROLLER_MASTER_KEY` + rotating bearer token
+## Core application features
 
-Logical flow:
-
-1. Slave is installed in `AS-S` and linked to master URL.
-2. Controller calls `POST /controller/pair` on master.
-3. Controller calls snapshot/update apply endpoints on slave.
-4. Controller calls update ACK endpoint on master.
-5. Master runs periodic health checks to linked slaves (`GET /controller/health`).
-6. Admin pages show link/event telemetry.
-
-## Current protocol surface
-
-### Controller -> Master
-
-- `POST /controller/pair`
-- `POST /controller/update/ack`
-
-### Controller -> Slave
-
-- `POST /controller/snapshot/apply`
-- `POST /controller/update/apply`
-
-### Master -> Slave
-
-- `GET /controller/health`
+- Password and secure note CRUD
+- Tags/groups management and detail views
+- Sharing with other active users
+- Search + pagination on list pages
+- Timed unlock sessions + manual lock
+- Per-user settings and account credential updates
+- Admin backup/restore and cleanup tools
+- Admin Users navigation:
+  - `Admin -> Users -> Create` (dedicated page)
+  - `Admin -> Users -> List` (dedicated page)
 
 ## Environment
 
-Copy `.env.example` to `.env` and set values.
+Copy `.env.example` to `.env`.
 
-Required for controller API usage:
+Important variables for controller flows:
 
 - `CONTROLLER_SHARED_TOKEN`
 - `CONTROLLER_MASTER_KEY`
 
-`CONTROLLER_SHARED_TOKEN` is still required for legacy `/controller/*` relay endpoints.
-`CONTROLLER_MASTER_KEY` is required for `/controller/auth/bootstrap`.
+Optional admin service restart variables:
 
-Optional for admin-triggered service restart:
+- `UI_SERVICE_RESTART_ENABLED`
+- `UI_SERVICE_RESTART_COMMAND`
+- `UI_SERVICE_RESTART_ARGS`
 
-- `UI_SERVICE_RESTART_ENABLED` (`true`/`false`)
-- `UI_SERVICE_RESTART_COMMAND` (executable to run)
-- `UI_SERVICE_RESTART_ARGS` (space-separated args)
-
-## Setup
+## Run
 
 ```powershell
 cd E:\pwdb-main
 docker compose up --build -d
 ```
 
-Open first-run setup:
+Setup URL:
 
 - `http://<host>:8080/setup`
 
-During setup choose:
-
-- `AS-M` for master (authoritative)
-- `AS-S` for slave (requires linked master URL)
-
-## Dev test scripts
-
-From `E:\pwdb-main`:
-
-- Pair slave on master:
-  - `scripts\test-auth.bat`
-- Send ACK to master:
-  - `scripts\test-ack.bat`
-
-These scripts use `curl.exe` and can be run from PowerShell.
-
-## Admin visibility
-
-### On master (`AS-M`)
-
-Admin page shows:
-
-- Slave server ID
-- Slave endpoint
-- Link status
-- Health (`active`, `stale`, `offline`)
-- Last handshake timestamp
-- Controller registry list with `Approved` / `Non-approved` state
-- Approve / Non-approve actions for each controller
-- Navbar admin users submenu with dialog actions:
-  - `Admin (navbar) -> Users -> Create`
-  - `Admin (navbar) -> Users -> List`
-- Optional `Restart Service` action (only if UI restart env vars are enabled)
-
-Health thresholds:
-
-- `active`: handshake <= 90s
-- `stale`: handshake > 90s and <= 5m
-- `offline`: handshake > 5m (or non-active status)
-
-### On slave (`AS-S`)
-
-Admin page shows incoming controller events:
-
-- Event ID
-- Master ID
-- Vault version
-- Event status
-- Received time
-
-## Migrations added in v4
-
-- `010_server_profile.sql`
-- `011_controller_links.sql`
-- `012_controller_update_events.sql`
-- `013_controller_links_handshake.sql`
-- `014_controller_registry.sql`
-
-## Implemented vs pending
-
-Implemented:
-
-- Mode bootstrap and persistence
-- Pair + snapshot/apply + update/apply + ack endpoints
-- Token-based controller auth
-- Admin telemetry for master/slave controller state
-- Periodic master-to-slave health checks for linked controllers
-- Duplicate controller-link endpoint cleanup:
-  - Automatic dedupe during pair/upsert
-  - Admin cleanup action for existing duplicates
-- Registry onboarding flow:
-  - Bootstrap registers controller identity
-  - Unapproved controllers receive pending onboarding response (no operational token)
-  - Admin approval required before bootstrap returns usable token
-
-Pending:
-
-- Real controller worker/orchestration loop
-- Automatic master-change detection and fanout to slaves
-- End-to-end payload signature verification
-- Production transport hardening (`https`/mTLS)
-
 ## Security notice
 
-This is **experimental, unstable, development-stage software**.
-Do not expose directly to the public internet.
-Do not treat this branch as production-safe.
+This project contains experimental controller/distributed capabilities.
+Use in trusted environments only; avoid public exposure until protocol hardening is complete.
 
-Current limitations:
-
-- Controller auth is shared-token based (no mTLS yet)
-- Default local/development deployment may run over plain HTTP
-- No rate-limiting/brute-force controls for controller endpoints yet
-
-## Fixed bugs
+## Fixed bugs (recent)
 
 <details>
 <summary>Open fixed bugs list</summary>
 
-- Fixed duplicate slave rows in master `Controller Links` when same endpoint was re-registered with a different `slave_id`.
-- Fixed missing cleanup path by adding admin action: `Cleanup Duplicate Endpoints`.
-- Fixed link freshness drift by adding periodic master-to-slave health checks (`GET /controller/health`).
-- Fixed onboarding flow so unapproved controllers no longer receive operational token on first bootstrap.
+- Fixed duplicate slave rows in master `Controller Links` for same endpoint re-registration.
+- Added admin cleanup action: `Cleanup Duplicate Endpoints`.
+- Added periodic master-to-slave health checks (`GET /controller/health`).
+- Enforced onboarding approval before issuing operational controller token.
+- Reworked Admin Users submenu to open dedicated pages (no dashboard modal race).
 
 </details>
-
-## Branch and release context
-
-- Branch: `v4`
-- Release tag: `4.0.2`
-- Latest pushed work includes registry approval onboarding and periodic master-to-slave health checks.
