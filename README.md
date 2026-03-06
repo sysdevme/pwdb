@@ -56,9 +56,9 @@ Newly created users start in `pending` status and automatically become `active` 
 - Per-user login password and master password
 - Account page for users to update their own login and master passwords
 - Admin backup/restore and credential reset tools
-- Admin users submenu with dialog actions:
-  - `Admin -> User -> Create`
-  - `Admin -> User -> List`
+- Navbar admin users submenu with dialog actions:
+  - `Admin (navbar) -> Users -> Create`
+  - `Admin (navbar) -> Users -> List`
 - Admin cleanup tools for tags/groups (record-level and global clear)
 - 1Password 7 `.1pif` import with import issue tracking
 - Timed unlock session with manual lock
