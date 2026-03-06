@@ -169,4 +169,5 @@ Current limitations:
 ## Branch and release context
 
 - Branch: `v4`
-- Latest pushed work includes master/slave topology draft and controller telemetry UI.
+- Release tag: `4.0.2`
+- Latest pushed work includes registry approval onboarding and periodic master-to-slave health checks.
