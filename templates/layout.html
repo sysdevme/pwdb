@@ -333,7 +333,7 @@
       })();
       (function () {
         function openUsersModalAction(action) {
-          if (window.location.pathname !== "/admin" || !window.bootstrap) {
+          if (window.location.pathname !== "/admin") {
             window.location.href = "/admin?users=" + encodeURIComponent(action);
             return;
           }
@@ -345,7 +345,18 @@
           if (!modalEl) {
             return;
           }
+          if (!window.bootstrap) {
+            return;
+          }
           bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        }
+        function openUsersModalActionWithRetry(action, retriesLeft) {
+          openUsersModalAction(action);
+          if (!window.bootstrap && retriesLeft > 0) {
+            setTimeout(function () {
+              openUsersModalActionWithRetry(action, retriesLeft - 1);
+            }, 50);
+          }
         }
         document.querySelectorAll(".pm-users-action").forEach((link) => {
           link.addEventListener("click", (event) => {
@@ -354,13 +365,13 @@
             if (!action) {
               return;
             }
-            openUsersModalAction(action);
+            openUsersModalActionWithRetry(action, 20);
           });
         });
         if (window.location.pathname === "/admin") {
           const action = new URLSearchParams(window.location.search).get("users");
           if (action === "create" || action === "list") {
-            openUsersModalAction(action);
+            openUsersModalActionWithRetry(action, 20);
           }
         }
       })();
