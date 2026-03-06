@@ -50,16 +50,6 @@
         font-weight: 700;
         line-height: 1;
       }
-      .dropdown-menu .dropend > .dropdown-menu {
-        top: 0;
-        left: 100%;
-        margin-top: -0.25rem;
-      }
-      @media (min-width: 992px) {
-        .dropdown-menu .dropend:hover > .dropdown-menu {
-          display: block;
-        }
-      }
     </style>
   </head>
   <body>
@@ -89,19 +79,20 @@
             <li class="nav-item"><a class="nav-link" href="/account">Account</a></li>
             <li class="nav-item"><a class="nav-link" href="/settings">Settings</a></li>
             {{ if .IsAdmin }}
-            <li class="nav-item dropdown">
-              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Admin</a>
-              <ul class="dropdown-menu">
-                <li><a class="dropdown-item" href="/admin">Dashboard</a></li>
-                <li><hr class="dropdown-divider"></li>
-                <li class="dropend">
-                  <a class="dropdown-item dropdown-toggle" href="#" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">Users</a>
-                  <ul class="dropdown-menu">
-                    <li><a class="dropdown-item pm-users-action" href="/admin?users=create" data-users-action="create">Create</a></li>
-                    <li><a class="dropdown-item pm-users-action" href="/admin?users=list" data-users-action="list">List</a></li>
-                  </ul>
-                </li>
-              </ul>
+            <li class="nav-item">
+              <div class="btn-group" role="group" aria-label="Admin menu">
+                <a class="btn btn-link nav-link text-decoration-none" href="/admin">Admin</a>
+                <button type="button" class="btn btn-link nav-link dropdown-toggle dropdown-toggle-split text-decoration-none" data-bs-toggle="dropdown" aria-expanded="false">
+                  <span class="visually-hidden">Toggle Admin menu</span>
+                </button>
+                <ul class="dropdown-menu">
+                  <li><a class="dropdown-item" href="/admin">Dashboard</a></li>
+                  <li><hr class="dropdown-divider"></li>
+                  <li><h6 class="dropdown-header">Users</h6></li>
+                  <li><a class="dropdown-item" href="/admin?users=create">Create</a></li>
+                  <li><a class="dropdown-item" href="/admin?users=list">List</a></li>
+                </ul>
+              </div>
             </li>
             {{ end }}
           </ul>
@@ -354,68 +345,6 @@
             const raw = parseFloat(btn.getAttribute("data-site-scale-opt") || "1");
             const scale = applyScale(raw);
             localStorage.setItem(storageKey, String(scale));
-          });
-        });
-      })();
-      (function () {
-        function openAdminUsersAction(action) {
-          if (window.location.pathname !== "/admin") {
-            window.location.href = "/admin?users=" + encodeURIComponent(action);
-            return;
-          }
-          if (!window.bootstrap) {
-            window.location.href = "/admin?users=" + encodeURIComponent(action);
-            return;
-          }
-          const modalId = action === "create" ? "createUserModal" : (action === "list" ? "listUsersModal" : "");
-          if (!modalId) {
-            return;
-          }
-          const modalEl = document.getElementById(modalId);
-          if (!modalEl) {
-            window.location.href = "/admin?users=" + encodeURIComponent(action);
-            return;
-          }
-          bootstrap.Modal.getOrCreateInstance(modalEl).show();
-        }
-
-        document.querySelectorAll(".pm-users-action").forEach((link) => {
-          link.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const action = link.getAttribute("data-users-action");
-            if (!action) {
-              return;
-            }
-            openAdminUsersAction(action);
-          });
-        });
-
-        document.querySelectorAll(".dropdown-menu .dropdown-toggle").forEach((toggle) => {
-          toggle.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const submenu = toggle.nextElementSibling;
-            if (!submenu || !submenu.classList.contains("dropdown-menu")) {
-              return;
-            }
-            const parentMenu = toggle.closest(".dropdown-menu");
-            if (parentMenu) {
-              parentMenu.querySelectorAll(":scope .dropdown-menu.show").forEach((openMenu) => {
-                if (openMenu !== submenu) {
-                  openMenu.classList.remove("show");
-                }
-              });
-            }
-            submenu.classList.toggle("show");
-          });
-        });
-
-        document.querySelectorAll(".dropdown").forEach((rootDropdown) => {
-          rootDropdown.addEventListener("hide.bs.dropdown", () => {
-            rootDropdown.querySelectorAll(".dropdown-menu.show").forEach((openMenu) => {
-              openMenu.classList.remove("show");
-            });
           });
         });
       })();
