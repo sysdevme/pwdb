@@ -50,6 +50,16 @@
         font-weight: 700;
         line-height: 1;
       }
+      .dropdown-menu .dropend > .dropdown-menu {
+        top: 0;
+        left: 100%;
+        margin-top: -0.25rem;
+      }
+      @media (min-width: 992px) {
+        .dropdown-menu .dropend:hover > .dropdown-menu {
+          display: block;
+        }
+      }
     </style>
   </head>
   <body>
@@ -344,6 +354,35 @@
             const raw = parseFloat(btn.getAttribute("data-site-scale-opt") || "1");
             const scale = applyScale(raw);
             localStorage.setItem(storageKey, String(scale));
+          });
+        });
+      })();
+      (function () {
+        document.querySelectorAll(".dropdown-menu .dropdown-toggle").forEach((toggle) => {
+          toggle.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const submenu = toggle.nextElementSibling;
+            if (!submenu || !submenu.classList.contains("dropdown-menu")) {
+              return;
+            }
+            const parentMenu = toggle.closest(".dropdown-menu");
+            if (parentMenu) {
+              parentMenu.querySelectorAll(":scope .dropdown-menu.show").forEach((openMenu) => {
+                if (openMenu !== submenu) {
+                  openMenu.classList.remove("show");
+                }
+              });
+            }
+            submenu.classList.toggle("show");
+          });
+        });
+
+        document.querySelectorAll(".dropdown").forEach((rootDropdown) => {
+          rootDropdown.addEventListener("hide.bs.dropdown", () => {
+            rootDropdown.querySelectorAll(".dropdown-menu.show").forEach((openMenu) => {
+              openMenu.classList.remove("show");
+            });
           });
         });
       })();
