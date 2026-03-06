@@ -37,7 +37,8 @@ Logical flow:
 2. Controller calls `POST /controller/pair` on master.
 3. Controller calls snapshot/update apply endpoints on slave.
 4. Controller calls update ACK endpoint on master.
-5. Admin pages show link/event telemetry.
+5. Master runs periodic health checks to linked slaves (`GET /controller/health`).
+6. Admin pages show link/event telemetry.
 
 ## Current protocol surface
 
@@ -50,6 +51,10 @@ Logical flow:
 
 - `POST /controller/snapshot/apply`
 - `POST /controller/update/apply`
+
+### Master -> Slave
+
+- `GET /controller/health`
 
 ## Environment
 
@@ -136,6 +141,7 @@ Implemented:
 - Pair + snapshot/apply + update/apply + ack endpoints
 - Token-based controller auth
 - Admin telemetry for master/slave controller state
+- Periodic master-to-slave health checks for linked controllers
 - Registry onboarding flow:
   - Bootstrap registers controller identity
   - Unapproved controllers receive pending onboarding response (no operational token)

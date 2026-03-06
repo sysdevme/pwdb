@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,6 +35,8 @@ const userCtxKey ctxKey = 1
 const (
 	defaultPageSize      = 10
 	defaultUnlockMinutes = 5
+	controllerHealthcheckInterval = 30 * time.Second
+	controllerHealthcheckTimeout  = 5 * time.Second
 )
 
 type uiSettings struct {
@@ -88,6 +91,7 @@ type Server struct {
 	store       *db.Store
 	crypto      *crypto.Service
 	unlock      *unlockManager
+	controllerHTTPClient *http.Client
 }
 
 func isSecureRequest(r *http.Request) bool {
@@ -101,12 +105,17 @@ func isSecureRequest(r *http.Request) bool {
 }
 
 func NewServer(templates *template.Template, store *db.Store, cryptoSvc *crypto.Service) *Server {
-	return &Server{
+	srv := &Server{
 		templateDir: "templates",
 		store:       store,
 		crypto:      cryptoSvc,
 		unlock:      newUnlockManager(),
+		controllerHTTPClient: &http.Client{
+			Timeout: controllerHealthcheckTimeout,
+		},
 	}
+	srv.startControllerLinkHealthcheckLoop()
+	return srv
 }
 
 func (s *Server) Routes() http.Handler {
@@ -126,6 +135,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/controller/auth/bootstrap", s.handleControllerAuthBootstrap)
 	mux.HandleFunc("/controller/auth/rotate", s.handleControllerAuthRotate)
 	mux.HandleFunc("/controller/controllers", s.handleControllerListControllers)
+	mux.HandleFunc("/controller/health", s.handleControllerHealth)
 	mux.HandleFunc("/controller/pair", s.handleControllerPair)
 	mux.HandleFunc("/controller/snapshot/apply", s.handleControllerSnapshotApply)
 	mux.HandleFunc("/controller/update/apply", s.handleControllerUpdateApply)
@@ -532,6 +542,31 @@ func (s *Server) handleControllerListControllers(w http.ResponseWriter, r *http.
 	})
 }
 
+func (s *Server) handleControllerHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeController(w, r) {
+		return
+	}
+	profile, err := s.store.GetServerProfile(r.Context())
+	if err != nil {
+		http.Error(w, "server profile is not initialized", http.StatusConflict)
+		return
+	}
+	if profile.ServerMode != "AS-S" {
+		http.Error(w, "health endpoint is allowed only on AS-S", http.StatusConflict)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":      "ok",
+		"server_mode": profile.ServerMode,
+		"sync_status": profile.SyncStatus,
+		"checked_at":  time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
 func (s *Server) handleControllerPair(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -563,6 +598,62 @@ func (s *Server) handleControllerPair(w http.ResponseWriter, r *http.Request) {
 		"master_mode":     profile.ServerMode,
 		"slave_server_id": strings.TrimSpace(req.SlaveServerID),
 	})
+}
+
+func (s *Server) startControllerLinkHealthcheckLoop() {
+	go func() {
+		// Run once on startup, then periodically.
+		s.runControllerLinkHealthcheck()
+		ticker := time.NewTicker(controllerHealthcheckInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.runControllerLinkHealthcheck()
+		}
+	}()
+}
+
+func (s *Server) runControllerLinkHealthcheck() {
+	ctx, cancel := context.WithTimeout(context.Background(), controllerHealthcheckTimeout)
+	profile, err := s.store.GetServerProfile(ctx)
+	cancel()
+	if err != nil || profile.ServerMode != "AS-M" {
+		return
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), controllerHealthcheckTimeout)
+	links, err := s.store.ListControllerLinks(ctx)
+	cancel()
+	if err != nil || len(links) == 0 {
+		return
+	}
+	token := strings.TrimSpace(os.Getenv("CONTROLLER_SHARED_TOKEN"))
+	if token == "" {
+		return
+	}
+	for _, link := range links {
+		slaveID := strings.TrimSpace(link.SlaveServerID)
+		endpoint := strings.TrimSpace(link.SlaveEndpoint)
+		if slaveID == "" || endpoint == "" {
+			continue
+		}
+		healthURL := strings.TrimRight(endpoint, "/") + "/controller/health"
+		req, err := http.NewRequest(http.MethodGet, healthURL, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("X-Controller-Token", token)
+		resp, err := s.controllerHTTPClient.Do(req)
+		if err != nil {
+			continue
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), controllerHealthcheckTimeout)
+		_ = s.store.TouchControllerLinkHandshake(ctx, slaveID, "active")
+		cancel()
+	}
 }
 
 func (s *Server) handleControllerSnapshotApply(w http.ResponseWriter, r *http.Request) {
