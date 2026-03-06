@@ -80,8 +80,8 @@
                 <li class="dropend">
                   <a class="dropdown-item dropdown-toggle" href="#" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">Users</a>
                   <ul class="dropdown-menu">
-                    <li><a class="dropdown-item" href="/admin?users=create">Create</a></li>
-                    <li><a class="dropdown-item" href="/admin?users=list">List</a></li>
+                    <li><a class="dropdown-item pm-users-action" href="/admin?users=create" data-users-action="create">Create</a></li>
+                    <li><a class="dropdown-item pm-users-action" href="/admin?users=list" data-users-action="list">List</a></li>
                   </ul>
                 </li>
               </ul>
@@ -341,6 +341,39 @@
         });
       })();
       (function () {
+        function openAdminUsersAction(action) {
+          if (window.location.pathname !== "/admin") {
+            window.location.href = "/admin?users=" + encodeURIComponent(action);
+            return;
+          }
+          if (!window.bootstrap) {
+            window.location.href = "/admin?users=" + encodeURIComponent(action);
+            return;
+          }
+          const modalId = action === "create" ? "createUserModal" : (action === "list" ? "listUsersModal" : "");
+          if (!modalId) {
+            return;
+          }
+          const modalEl = document.getElementById(modalId);
+          if (!modalEl) {
+            window.location.href = "/admin?users=" + encodeURIComponent(action);
+            return;
+          }
+          bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        }
+
+        document.querySelectorAll(".pm-users-action").forEach((link) => {
+          link.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const action = link.getAttribute("data-users-action");
+            if (!action) {
+              return;
+            }
+            openAdminUsersAction(action);
+          });
+        });
+
         document.querySelectorAll(".dropdown-menu .dropdown-toggle").forEach((toggle) => {
           toggle.addEventListener("click", (event) => {
             event.preventDefault();
