@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -66,6 +68,21 @@ type controllerUpdateAckRequest struct {
 	Status         string `json:"status"`
 }
 
+type controllerBootstrapAuthRequest struct {
+	ControllerID string `json:"controller_id"`
+	MasterKey    string `json:"master_key"`
+}
+
+type controllerRotateAuthRequest struct {
+	ControllerID string `json:"controller_id"`
+}
+
+type controllerAuthTokenResponse struct {
+	NextToken string `json:"next_token,omitempty"`
+	Status    string `json:"status"`
+	Approved  bool   `json:"approved"`
+}
+
 type Server struct {
 	templateDir string
 	store       *db.Store
@@ -106,6 +123,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/login", s.handleLogin)
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/setup", s.handleSetup)
+	mux.HandleFunc("/controller/auth/bootstrap", s.handleControllerAuthBootstrap)
+	mux.HandleFunc("/controller/auth/rotate", s.handleControllerAuthRotate)
+	mux.HandleFunc("/controller/controllers", s.handleControllerListControllers)
 	mux.HandleFunc("/controller/pair", s.handleControllerPair)
 	mux.HandleFunc("/controller/snapshot/apply", s.handleControllerSnapshotApply)
 	mux.HandleFunc("/controller/update/apply", s.handleControllerUpdateApply)
@@ -145,6 +165,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/admin/rebuild", s.handleAdminRebuild)
 	mux.HandleFunc("/admin/users", s.handleAdminCreateUser)
 	mux.HandleFunc("/admin/users/update", s.handleAdminUpdateUser)
+	mux.HandleFunc("/admin/controllers/status", s.handleAdminSetControllerStatus)
 	mux.HandleFunc("/admin/records/clear-tags", s.handleAdminClearRecordTags)
 	mux.HandleFunc("/admin/records/clear-groups", s.handleAdminClearRecordGroups)
 	mux.HandleFunc("/admin/tags/clear-all", s.handleAdminClearAllTags)
@@ -365,6 +386,150 @@ func (s *Server) authorizeController(w http.ResponseWriter, r *http.Request) boo
 		return false
 	}
 	return true
+}
+
+func hashControllerToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func bearerTokenFromRequest(r *http.Request) string {
+	raw := strings.TrimSpace(r.Header.Get("Authorization"))
+	if raw == "" {
+		return ""
+	}
+	const prefix = "Bearer "
+	if !strings.HasPrefix(raw, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(raw, prefix))
+}
+
+func (s *Server) handleControllerAuthBootstrap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req controllerBootstrapAuthRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	req.ControllerID = strings.TrimSpace(req.ControllerID)
+	req.MasterKey = strings.TrimSpace(req.MasterKey)
+	if req.ControllerID == "" || req.MasterKey == "" {
+		http.Error(w, "controller_id and master_key are required", http.StatusBadRequest)
+		return
+	}
+	expectedMasterKey := strings.TrimSpace(os.Getenv("CONTROLLER_MASTER_KEY"))
+	if expectedMasterKey == "" {
+		http.Error(w, "controller master key is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(req.MasterKey), []byte(expectedMasterKey)) != 1 {
+		http.Error(w, "invalid master key", http.StatusUnauthorized)
+		return
+	}
+	status, err := s.store.UpsertControllerRegistry(r.Context(), req.ControllerID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if status != "active" {
+		writeJSON(w, http.StatusAccepted, controllerAuthTokenResponse{
+			Status:   "pending_approval",
+			Approved: false,
+		})
+		return
+	}
+	nextToken, err := randomToken()
+	if err != nil {
+		http.Error(w, "failed to issue token", http.StatusInternalServerError)
+		return
+	}
+	if err := s.store.IssueControllerTokenByID(r.Context(), req.ControllerID, hashControllerToken(nextToken)); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	writeJSON(w, http.StatusOK, controllerAuthTokenResponse{
+		NextToken: nextToken,
+		Status:    "approved",
+		Approved:  true,
+	})
+}
+
+func (s *Server) handleControllerAuthRotate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	token := bearerTokenFromRequest(r)
+	if token == "" {
+		http.Error(w, "missing bearer token", http.StatusUnauthorized)
+		return
+	}
+	var req controllerRotateAuthRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	req.ControllerID = strings.TrimSpace(req.ControllerID)
+	if req.ControllerID == "" {
+		http.Error(w, "controller_id is required", http.StatusBadRequest)
+		return
+	}
+	nextToken, err := randomToken()
+	if err != nil {
+		http.Error(w, "failed to issue token", http.StatusInternalServerError)
+		return
+	}
+	if err := s.store.RotateControllerTokenByID(r.Context(), req.ControllerID, hashControllerToken(token), hashControllerToken(nextToken)); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	writeJSON(w, http.StatusOK, controllerAuthTokenResponse{
+		NextToken: nextToken,
+		Status:    "approved",
+		Approved:  true,
+	})
+}
+
+func (s *Server) handleControllerListControllers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	token := bearerTokenFromRequest(r)
+	if token == "" {
+		http.Error(w, "missing bearer token", http.StatusUnauthorized)
+		return
+	}
+	nextToken, err := randomToken()
+	if err != nil {
+		http.Error(w, "failed to issue token", http.StatusInternalServerError)
+		return
+	}
+	if _, err := s.store.RotateControllerTokenByHash(r.Context(), hashControllerToken(token), hashControllerToken(nextToken)); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	registry, err := s.store.ListControllerRegistry(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var controllers []map[string]string
+	for _, entry := range registry {
+		controllers = append(controllers, map[string]string{
+			"id":     entry.ControllerID,
+			"name":   entry.ControllerID,
+			"status": entry.Status,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"controllers": controllers,
+		"next_token":  nextToken,
+	})
 }
 
 func (s *Server) handleControllerPair(w http.ResponseWriter, r *http.Request) {
@@ -1840,6 +2005,22 @@ type adminControllerLinkView struct {
 	Health          string
 }
 
+type adminControllerRegistryView struct {
+	ControllerID   string
+	Status         string
+	TokenUpdatedAt string
+	LastSeenAt     string
+	CreatedAt      string
+	UpdatedAt      string
+}
+
+func formatAdminTimestamp(ts time.Time) string {
+	if ts.IsZero() {
+		return "-"
+	}
+	return ts.Format("2006-01-02 15:04:05")
+}
+
 func (s *Server) adminPageData(ctx context.Context, message string) (map[string]any, error) {
 	users, err := s.store.ListUsers(ctx)
 	if err != nil {
@@ -1879,6 +2060,20 @@ func (s *Server) adminPageData(ctx context.Context, message string) (map[string]
 					})
 				}
 				data["ControllerLinks"] = viewLinks
+			}
+			if registry, err := s.store.ListControllerRegistry(ctx); err == nil {
+				var viewRegistry []adminControllerRegistryView
+				for _, entry := range registry {
+					viewRegistry = append(viewRegistry, adminControllerRegistryView{
+						ControllerID:   entry.ControllerID,
+						Status:         entry.Status,
+						TokenUpdatedAt: formatAdminTimestamp(entry.TokenUpdatedAt),
+						LastSeenAt:     formatAdminTimestamp(entry.LastSeenAt),
+						CreatedAt:      formatAdminTimestamp(entry.CreatedAt),
+						UpdatedAt:      formatAdminTimestamp(entry.UpdatedAt),
+					})
+				}
+				data["ControllerRegistry"] = viewRegistry
 			}
 		}
 		if profile.ServerMode == "AS-S" {
@@ -2012,6 +2207,41 @@ func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderAdminPage(w, r, "User updated.")
+}
+
+func (s *Server) handleAdminSetControllerStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok || !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	controllerID := strings.TrimSpace(r.FormValue("controller_id"))
+	status := strings.TrimSpace(r.FormValue("status"))
+	if controllerID == "" || status == "" {
+		http.Error(w, "controller_id and status are required", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.SetControllerRegistryStatus(r.Context(), controllerID, status); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if status == "active" {
+		s.renderAdminPage(w, r, "Controller approved.")
+		return
+	}
+	s.renderAdminPage(w, r, "Controller set to non-approved.")
 }
 
 func (s *Server) handleAdminClearRecordTags(w http.ResponseWriter, r *http.Request) {

@@ -251,6 +251,62 @@ const (
 		LIMIT $1
 	`
 
+	sqlUpsertControllerRegistry = `
+		INSERT INTO controller_registry (
+			controller_id, status, last_seen_at, updated_at
+		)
+		VALUES ($1, 'disabled', NOW(), NOW())
+		ON CONFLICT (controller_id) DO UPDATE
+		SET last_seen_at = NOW(),
+		    updated_at = NOW()
+		RETURNING status
+	`
+
+	sqlIssueControllerTokenByID = `
+		UPDATE controller_registry
+		SET current_token_hash = $2,
+		    token_updated_at = NOW(),
+		    last_seen_at = NOW(),
+		    updated_at = NOW()
+		WHERE controller_id = $1
+		  AND status = 'active'
+	`
+
+	sqlRotateControllerTokenByID = `
+		UPDATE controller_registry
+		SET current_token_hash = $3,
+		    token_updated_at = NOW(),
+		    last_seen_at = NOW(),
+		    updated_at = NOW()
+		WHERE controller_id = $1
+		  AND status = 'active'
+		  AND current_token_hash = $2
+	`
+
+	sqlRotateControllerTokenByHash = `
+		UPDATE controller_registry
+		SET current_token_hash = $2,
+		    token_updated_at = NOW(),
+		    last_seen_at = NOW(),
+		    updated_at = NOW()
+		WHERE status = 'active'
+		  AND current_token_hash = $1
+		RETURNING controller_id
+	`
+
+	sqlListControllerRegistry = `
+		SELECT controller_id, status, token_updated_at, last_seen_at, created_at, updated_at
+		FROM controller_registry
+		ORDER BY created_at ASC
+	`
+
+	sqlSetControllerRegistryStatus = `
+		UPDATE controller_registry
+		SET status = $2,
+		    updated_at = NOW()
+		WHERE controller_id = $1
+	`
+
 	sqlCreateUser = `
 		INSERT INTO users (id, email, password_hash, master_password_hash, is_admin, status)
 		VALUES ($1, $2, $3, $4, $5, $6)

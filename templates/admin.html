@@ -155,6 +155,52 @@
       {{ else }}
       <div class="alert alert-secondary mb-0">No controller links yet.</div>
       {{ end }}
+      {{ if and .AdminServerProfile (eq .AdminServerProfile.ServerMode "AS-M") }}
+      <hr class="my-4">
+      <h6>Controller Registry</h6>
+      {{ if .ControllerRegistry }}
+      <div class="table-responsive">
+        <table class="table table-striped align-middle">
+          <thead>
+            <tr>
+              <th>Controller ID</th>
+              <th>Status</th>
+              <th>Last Seen</th>
+              <th>Token Updated</th>
+              <th>Created</th>
+              <th>Updated</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ range .ControllerRegistry }}
+            <tr>
+              <td><code>{{ .ControllerID }}</code></td>
+              <td>
+                <span class="badge {{ if eq .Status "active" }}text-bg-success{{ else }}text-bg-secondary{{ end }}">{{ if eq .Status "active" }}Approved{{ else }}Non-approved{{ end }}</span>
+              </td>
+              <td>{{ .LastSeenAt }}</td>
+              <td>{{ .TokenUpdatedAt }}</td>
+              <td>{{ .CreatedAt }}</td>
+              <td>{{ .UpdatedAt }}</td>
+              <td>
+                <form method="post" action="/admin/controllers/status" class="d-inline">
+                  <input type="hidden" name="controller_id" value="{{ .ControllerID }}">
+                  <input type="hidden" name="status" value="{{ if eq .Status "active" }}disabled{{ else }}active{{ end }}">
+                  <button class="btn btn-sm {{ if eq .Status "active" }}btn-outline-secondary{{ else }}btn-outline-success{{ end }}" type="submit">
+                    {{ if eq .Status "active" }}Mark Non-approved{{ else }}Approve{{ end }}
+                  </button>
+                </form>
+              </td>
+            </tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+      {{ else }}
+      <div class="alert alert-secondary mb-0">No controller registry entries yet.</div>
+      {{ end }}
+      {{ end }}
       {{ if and .AdminServerProfile (eq .AdminServerProfile.ServerMode "AS-S") }}
       <hr class="my-4">
       <h6>Incoming Controller Events</h6>

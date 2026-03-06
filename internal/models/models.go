@@ -124,3 +124,12 @@ type ControllerUpdateEvent struct {
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
+
+type ControllerRegistryEntry struct {
+	ControllerID   string
+	Status         string
+	TokenUpdatedAt time.Time
+	LastSeenAt     time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}

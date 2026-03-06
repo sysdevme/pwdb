@@ -727,6 +727,112 @@ func (s *Store) ListControllerUpdateEvents(ctx context.Context, limit int) ([]mo
 	return out, rows.Err()
 }
 
+func (s *Store) UpsertControllerRegistry(ctx context.Context, controllerID string) (string, error) {
+	controllerID = strings.TrimSpace(controllerID)
+	if controllerID == "" {
+		return "", errors.New("controller_id is required")
+	}
+	var status string
+	if err := s.pool.QueryRow(ctx, sqlUpsertControllerRegistry, controllerID).Scan(&status); err != nil {
+		return "", err
+	}
+	return status, nil
+}
+
+func (s *Store) IssueControllerTokenByID(ctx context.Context, controllerID string, nextTokenHash string) error {
+	controllerID = strings.TrimSpace(controllerID)
+	nextTokenHash = strings.TrimSpace(nextTokenHash)
+	if controllerID == "" || nextTokenHash == "" {
+		return errors.New("controller_id and next_token_hash are required")
+	}
+	tag, err := s.pool.Exec(ctx, sqlIssueControllerTokenByID, controllerID, nextTokenHash)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("controller is not approved")
+	}
+	return nil
+}
+
+func (s *Store) RotateControllerTokenByID(ctx context.Context, controllerID string, currentTokenHash string, nextTokenHash string) error {
+	controllerID = strings.TrimSpace(controllerID)
+	currentTokenHash = strings.TrimSpace(currentTokenHash)
+	nextTokenHash = strings.TrimSpace(nextTokenHash)
+	if controllerID == "" || currentTokenHash == "" || nextTokenHash == "" {
+		return errors.New("controller_id, current_token_hash and next_token_hash are required")
+	}
+	tag, err := s.pool.Exec(ctx, sqlRotateControllerTokenByID, controllerID, currentTokenHash, nextTokenHash)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("controller token is invalid or controller is inactive")
+	}
+	return nil
+}
+
+func (s *Store) RotateControllerTokenByHash(ctx context.Context, currentTokenHash string, nextTokenHash string) (string, error) {
+	currentTokenHash = strings.TrimSpace(currentTokenHash)
+	nextTokenHash = strings.TrimSpace(nextTokenHash)
+	if currentTokenHash == "" || nextTokenHash == "" {
+		return "", errors.New("current_token_hash and next_token_hash are required")
+	}
+	var controllerID string
+	err := s.pool.QueryRow(ctx, sqlRotateControllerTokenByHash, currentTokenHash, nextTokenHash).Scan(&controllerID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", errors.New("controller token is invalid or controller is inactive")
+		}
+		return "", err
+	}
+	return controllerID, nil
+}
+
+func (s *Store) ListControllerRegistry(ctx context.Context) ([]models.ControllerRegistryEntry, error) {
+	rows, err := s.pool.Query(ctx, sqlListControllerRegistry)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.ControllerRegistryEntry
+	for rows.Next() {
+		var item models.ControllerRegistryEntry
+		var tokenUpdatedAt *time.Time
+		var lastSeenAt *time.Time
+		if err := rows.Scan(&item.ControllerID, &item.Status, &tokenUpdatedAt, &lastSeenAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if tokenUpdatedAt != nil {
+			item.TokenUpdatedAt = *tokenUpdatedAt
+		}
+		if lastSeenAt != nil {
+			item.LastSeenAt = *lastSeenAt
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SetControllerRegistryStatus(ctx context.Context, controllerID string, status string) error {
+	controllerID = strings.TrimSpace(controllerID)
+	status = strings.TrimSpace(status)
+	if controllerID == "" || status == "" {
+		return errors.New("controller_id and status are required")
+	}
+	if status != "active" && status != "disabled" {
+		return errors.New("invalid status")
+	}
+	tag, err := s.pool.Exec(ctx, sqlSetControllerRegistryStatus, controllerID, status)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("controller is not found")
+	}
+	return nil
+}
+
 func (s *Store) CreateUser(ctx context.Context, user models.User) error {
 	id, err := parseOrNewUUID(user.ID)
 	if err != nil {

@@ -20,7 +20,7 @@ This branch is **experimental and unstable**.
 - Server profile persistence (`server_profile`)
 - Controller HTTP endpoints (dev mode over `http`)
 - Admin controller visibility:
-  - Master: controller links + health + last handshake
+  - Master: controller links + health + last handshake + registry approval state
   - Slave: incoming controller update events
 
 ## Topology (development)
@@ -28,7 +28,8 @@ This branch is **experimental and unstable**.
 - `pwdb-main` can run as master or slave
 - `pwdb-controller` is the relay/orchestrator
 - Communication is currently `HTTP + JSON`
-- Access control for controller endpoints uses `X-Controller-Token`
+- Legacy access control for relay endpoints uses `X-Controller-Token`
+- Controller registry onboarding uses `CONTROLLER_MASTER_KEY` + rotating bearer token
 
 Logical flow:
 
@@ -57,8 +58,10 @@ Copy `.env.example` to `.env` and set values.
 Required for controller API usage:
 
 - `CONTROLLER_SHARED_TOKEN`
+- `CONTROLLER_MASTER_KEY`
 
-Important: use the same token on controller, master, and slave in current dev mode.
+`CONTROLLER_SHARED_TOKEN` is still required for legacy `/controller/*` relay endpoints.
+`CONTROLLER_MASTER_KEY` is required for `/controller/auth/bootstrap`.
 
 ## Setup
 
@@ -98,6 +101,8 @@ Admin page shows:
 - Link status
 - Health (`active`, `stale`, `offline`)
 - Last handshake timestamp
+- Controller registry list with `Approved` / `Non-approved` state
+- Approve / Non-approve actions for each controller
 
 Health thresholds:
 
@@ -121,6 +126,7 @@ Admin page shows incoming controller events:
 - `011_controller_links.sql`
 - `012_controller_update_events.sql`
 - `013_controller_links_handshake.sql`
+- `014_controller_registry.sql`
 
 ## Implemented vs pending
 
@@ -130,6 +136,10 @@ Implemented:
 - Pair + snapshot/apply + update/apply + ack endpoints
 - Token-based controller auth
 - Admin telemetry for master/slave controller state
+- Registry onboarding flow:
+  - Bootstrap registers controller identity
+  - Unapproved controllers receive pending onboarding response (no operational token)
+  - Admin approval required before bootstrap returns usable token
 
 Pending:
 
