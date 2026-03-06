@@ -1,0 +1,31 @@
+{{ define "content" }}
+<h1 class="h3 mb-3">Admin Users: Create</h1>
+{{ if and .Unlocked .IsAdmin }}
+  {{ if .Message }}
+  <div class="alert alert-success">{{ .Message }}</div>
+  {{ end }}
+  <div class="card">
+    <div class="card-body">
+      <h5 class="card-title">Create User</h5>
+      <p class="text-muted">New users are created in pending status and become active after their first successful login.</p>
+      <form method="post" action="/admin/users">
+        <div class="mb-3">
+          <label class="form-label">Email</label>
+          <input type="email" name="email" class="form-control" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Login Password</label>
+          <input type="password" name="login_password" class="form-control" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Master Password</label>
+          <input type="password" name="master_password" class="form-control" required>
+        </div>
+        <button class="btn btn-outline-primary" type="submit">Create User</button>
+      </form>
+    </div>
+  </div>
+{{ else }}
+  <div class="alert alert-warning">Locked or insufficient permissions.</div>
+{{ end }}
+{{ end }}

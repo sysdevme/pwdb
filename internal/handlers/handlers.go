@@ -200,6 +200,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/admin/restore", s.handleAdminRestore)
 	mux.HandleFunc("/admin/rebuild", s.handleAdminRebuild)
 	mux.HandleFunc("/admin/users", s.handleAdminCreateUser)
+	mux.HandleFunc("/admin/users/create", s.handleAdminUsersCreatePage)
+	mux.HandleFunc("/admin/users/list", s.handleAdminUsersListPage)
 	mux.HandleFunc("/admin/users/update", s.handleAdminUpdateUser)
 	mux.HandleFunc("/admin/controllers/status", s.handleAdminSetControllerStatus)
 	mux.HandleFunc("/admin/controller-links/cleanup", s.handleAdminCleanupControllerLinks)
@@ -2141,13 +2143,8 @@ func formatAdminTimestamp(ts time.Time) string {
 }
 
 func (s *Server) adminPageData(ctx context.Context, message string) (map[string]any, error) {
-	users, err := s.store.ListUsers(ctx)
-	if err != nil {
-		return nil, err
-	}
 	data := map[string]any{
-		"Title": "Admin",
-		"Users": users,
+		"Title":                 "Admin",
 		"ServiceRestartEnabled": isUIServiceRestartEnabled(),
 	}
 	if message != "" {
@@ -2214,6 +2211,32 @@ func (s *Server) renderAdminPage(w http.ResponseWriter, r *http.Request, message
 	s.renderWithUnlock(w, r, "admin.html", data)
 }
 
+func (s *Server) renderAdminUsersCreatePage(w http.ResponseWriter, r *http.Request, message string) {
+	data := map[string]any{
+		"Title": "Admin - Users - Create",
+	}
+	if message != "" {
+		data["Message"] = message
+	}
+	s.renderWithUnlock(w, r, "admin_users_create.html", data)
+}
+
+func (s *Server) renderAdminUsersListPage(w http.ResponseWriter, r *http.Request, message string) {
+	users, err := s.store.ListUsers(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data := map[string]any{
+		"Title": "Admin - Users - List",
+		"Users": users,
+	}
+	if message != "" {
+		data["Message"] = message
+	}
+	s.renderWithUnlock(w, r, "admin_users_list.html", data)
+}
+
 func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -2225,6 +2248,32 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderAdminPage(w, r, "")
+}
+
+func (s *Server) handleAdminUsersCreatePage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok || !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	s.renderAdminUsersCreatePage(w, r, "")
+}
+
+func (s *Server) handleAdminUsersListPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok || !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	s.renderAdminUsersListPage(w, r, "")
 }
 
 func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -2276,7 +2325,7 @@ func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderAdminPage(w, r, "User created.")
+	s.renderAdminUsersCreatePage(w, r, "User created.")
 }
 
 func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
@@ -2326,7 +2375,7 @@ func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderAdminPage(w, r, "User updated.")
+	s.renderAdminUsersListPage(w, r, "User updated.")
 }
 
 func (s *Server) handleAdminSetControllerStatus(w http.ResponseWriter, r *http.Request) {

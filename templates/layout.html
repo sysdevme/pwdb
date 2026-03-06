@@ -89,8 +89,8 @@
                   <li><a class="dropdown-item" href="/admin">Dashboard</a></li>
                   <li><hr class="dropdown-divider"></li>
                   <li><h6 class="dropdown-header">Users</h6></li>
-                  <li><a class="dropdown-item pm-users-action" href="/admin?users=create" data-users-action="create">Create</a></li>
-                  <li><a class="dropdown-item pm-users-action" href="/admin?users=list" data-users-action="list">List</a></li>
+                  <li><a class="dropdown-item" href="/admin/users/create">Create</a></li>
+                  <li><a class="dropdown-item" href="/admin/users/list">List</a></li>
                 </ul>
               </div>
             </li>
@@ -347,50 +347,6 @@
             localStorage.setItem(storageKey, String(scale));
           });
         });
-      })();
-      (function () {
-        function openUsersModalAction(action) {
-          if (window.location.pathname !== "/admin") {
-            window.location.href = "/admin?users=" + encodeURIComponent(action);
-            return;
-          }
-          const modalId = action === "create" ? "createUserModal" : (action === "list" ? "listUsersModal" : "");
-          if (!modalId) {
-            return;
-          }
-          const modalEl = document.getElementById(modalId);
-          if (!modalEl) {
-            return;
-          }
-          if (!window.bootstrap) {
-            return;
-          }
-          bootstrap.Modal.getOrCreateInstance(modalEl).show();
-        }
-        function openUsersModalActionWithRetry(action, retriesLeft) {
-          openUsersModalAction(action);
-          if (!window.bootstrap && retriesLeft > 0) {
-            setTimeout(function () {
-              openUsersModalActionWithRetry(action, retriesLeft - 1);
-            }, 50);
-          }
-        }
-        document.querySelectorAll(".pm-users-action").forEach((link) => {
-          link.addEventListener("click", (event) => {
-            event.preventDefault();
-            const action = link.getAttribute("data-users-action");
-            if (!action) {
-              return;
-            }
-            openUsersModalActionWithRetry(action, 20);
-          });
-        });
-        if (window.location.pathname === "/admin") {
-          const action = new URLSearchParams(window.location.search).get("users");
-          if (action === "create" || action === "list") {
-            openUsersModalActionWithRetry(action, 20);
-          }
-        }
       })();
       (function () {
         function hashSeed(seed) {

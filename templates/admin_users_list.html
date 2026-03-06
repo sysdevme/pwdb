@@ -1,0 +1,56 @@
+{{ define "content" }}
+<h1 class="h3 mb-3">Admin Users: List</h1>
+{{ if and .Unlocked .IsAdmin }}
+  {{ if .Message }}
+  <div class="alert alert-success">{{ .Message }}</div>
+  {{ end }}
+  <div class="card">
+    <div class="card-body">
+      <h5 class="card-title">Users</h5>
+      <div class="table-responsive">
+        <table class="table table-striped align-middle">
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Status</th>
+              <th>Role</th>
+              <th>Created</th>
+              <th>Update Passwords</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ if .Users }}
+              {{ range .Users }}
+                <tr>
+                  <td>{{ .Email }}</td>
+                  <td><span class="badge {{ if eq .Status "active" }}text-bg-success{{ else }}text-bg-secondary{{ end }}">{{ .Status }}</span></td>
+                  <td>{{ if .IsAdmin }}Admin{{ else }}User{{ end }}</td>
+                  <td>{{ .CreatedAt.Format "2006-01-02" }}</td>
+                  <td>
+                    <form method="post" action="/admin/users/update" class="row g-2">
+                      <input type="hidden" name="user_id" value="{{ .ID }}">
+                      <div class="col-md-4">
+                        <input type="password" name="login_password" class="form-control" placeholder="Login password" required>
+                      </div>
+                      <div class="col-md-4">
+                        <input type="password" name="master_password" class="form-control" placeholder="Master password" required>
+                      </div>
+                      <div class="col-md-4">
+                        <button class="btn btn-outline-secondary w-100" type="submit">Update</button>
+                      </div>
+                    </form>
+                  </td>
+                </tr>
+              {{ end }}
+            {{ else }}
+              <tr><td colspan="5" class="text-muted">No users</td></tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{{ else }}
+  <div class="alert alert-warning">Locked or insufficient permissions.</div>
+{{ end }}
+{{ end }}
