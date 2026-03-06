@@ -114,9 +114,9 @@ Admin page shows:
 - Last handshake timestamp
 - Controller registry list with `Approved` / `Non-approved` state
 - Approve / Non-approve actions for each controller
-- Users submenu with dialog actions:
-  - `Admin -> User -> Create`
-  - `Admin -> User -> List`
+- Navbar admin users submenu with dialog actions:
+  - `Admin (navbar) -> Users -> Create`
+  - `Admin (navbar) -> Users -> List`
 - Optional `Restart Service` action (only if UI restart env vars are enabled)
 
 Health thresholds:
