@@ -60,6 +60,10 @@ Login:
   - Right side shows only user email dropdown
   - Dropdown includes unlock status, Lock/Unlock action, and Logout
   - View size controls moved from navbar to Settings page
+  - Tags/Groups moved to top navbar `Filter` dropdown
+- Settings page:
+  - Includes node role switch (`AS-M` <-> `AS-S`)
+  - `AS-M` -> `AS-S` validates linked master availability and shows popup with failure reason when blocked
 
 ## Experimental: master/slave + controller (under development)
 

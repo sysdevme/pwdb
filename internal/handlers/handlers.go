@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,9 +18,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
-	"sort"
 	"sync"
 	"time"
 
@@ -37,8 +37,8 @@ type ctxKey int
 const userCtxKey ctxKey = 1
 
 const (
-	defaultPageSize      = 10
-	defaultUnlockMinutes = 5
+	defaultPageSize               = 10
+	defaultUnlockMinutes          = 5
 	controllerHealthcheckInterval = 30 * time.Second
 	controllerHealthcheckTimeout  = 5 * time.Second
 	serviceRestartTriggerDelay    = 500 * time.Millisecond
@@ -57,9 +57,9 @@ type controllerPairRequest struct {
 }
 
 type controllerSnapshotApplyRequest struct {
-	MasterServerID string `json:"master_server_id"`
-	MasterURL      string `json:"master_url"`
-	SnapshotVersion int64 `json:"snapshot_version"`
+	MasterServerID  string `json:"master_server_id"`
+	MasterURL       string `json:"master_url"`
+	SnapshotVersion int64  `json:"snapshot_version"`
 }
 
 type controllerUpdateApplyRequest struct {
@@ -92,10 +92,10 @@ type controllerAuthTokenResponse struct {
 }
 
 type Server struct {
-	templateDir string
-	store       *db.Store
-	crypto      *crypto.Service
-	unlock      *unlockManager
+	templateDir          string
+	store                *db.Store
+	crypto               *crypto.Service
+	unlock               *unlockManager
 	controllerHTTPClient *http.Client
 }
 
@@ -325,7 +325,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.renderWithUnlock(w, r, "setup.html", map[string]any{
-			"Title": "Create Admin",
+			"Title":      "Create Admin",
 			"ServerMode": "AS-M",
 		})
 	case http.MethodPost:
@@ -695,11 +695,11 @@ func (s *Server) handleControllerLinksStatus(w http.ResponseWriter, r *http.Requ
 		"status":      "ok",
 		"master_mode": profile.ServerMode,
 		"summary": map[string]any{
-			"total_links":          len(links),
-			"active_links":         active,
-			"stale_links":          stale,
-			"offline_links":        offline,
-			"latest_handshake_at":  formatAdminTimestamp(latestHandshakeAt),
+			"total_links":         len(links),
+			"active_links":        active,
+			"stale_links":         stale,
+			"offline_links":       offline,
+			"latest_handshake_at": formatAdminTimestamp(latestHandshakeAt),
 		},
 		"links":      rows,
 		"checked_at": now.UTC().Format(time.RFC3339),
@@ -1889,17 +1889,129 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settings := s.readUISettings(r)
+	loadServerProfile := func() models.ServerProfile {
+		profile, err := s.store.GetServerProfile(r.Context())
+		if err != nil {
+			return models.ServerProfile{
+				ServerMode: "AS-M",
+				SyncStatus: "standalone",
+			}
+		}
+		if strings.TrimSpace(profile.ServerMode) == "" {
+			profile.ServerMode = "AS-M"
+		}
+		if strings.TrimSpace(profile.SyncStatus) == "" {
+			if profile.ServerMode == "AS-S" {
+				profile.SyncStatus = "await_updates"
+			} else {
+				profile.SyncStatus = "standalone"
+			}
+		}
+		return profile
+	}
+	renderSettings := func(profile models.ServerProfile, message string, errMsg string, popup bool) {
+		data := map[string]any{
+			"Title":         "Settings",
+			"Settings":      settings,
+			"User":          user,
+			"ServerProfile": profile,
+		}
+		if message != "" {
+			data["Message"] = message
+		}
+		if errMsg != "" {
+			data["Error"] = errMsg
+		}
+		if popup {
+			data["ModeChangePopup"] = true
+		}
+		s.renderWithUnlock(w, r, "settings.html", data)
+	}
 	switch r.Method {
 	case http.MethodGet:
-		s.renderWithUnlock(w, r, "settings.html", map[string]any{
-			"Title":    "Settings",
-			"Settings": settings,
-			"User":     user,
-		})
+		renderSettings(loadServerProfile(), "", "", false)
 	case http.MethodPost:
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
+		}
+		action := strings.TrimSpace(r.FormValue("action"))
+		if action == "server_mode" {
+			currentProfile := loadServerProfile()
+			currentMode := strings.TrimSpace(strings.ToUpper(currentProfile.ServerMode))
+			targetMode := strings.TrimSpace(strings.ToUpper(r.FormValue("server_mode")))
+			linkedMasterURL := strings.TrimSpace(r.FormValue("linked_master_url"))
+			linkedMasterID := strings.TrimSpace(r.FormValue("linked_master_id"))
+			switch targetMode {
+			case "AS-M":
+				if err := s.store.SetServerProfile(r.Context(), models.ServerProfile{
+					ServerMode:      "AS-M",
+					SyncStatus:      "standalone",
+					LinkedMasterID:  "",
+					LinkedMasterURL: "",
+				}); err != nil {
+					renderSettings(currentProfile, "", err.Error(), true)
+					return
+				}
+				renderSettings(models.ServerProfile{
+					ServerMode: "AS-M",
+					SyncStatus: "standalone",
+				}, "Node mode changed to Master (AS-M).", "", false)
+				return
+			case "AS-S":
+				if linkedMasterURL == "" {
+					currentProfile.ServerMode = "AS-S"
+					currentProfile.LinkedMasterID = linkedMasterID
+					currentProfile.LinkedMasterURL = linkedMasterURL
+					renderSettings(currentProfile, "", "Linked Master URL is required for Slave mode.", true)
+					return
+				}
+				masterURL, err := url.ParseRequestURI(linkedMasterURL)
+				if err != nil || masterURL.Scheme == "" || masterURL.Host == "" {
+					currentProfile.ServerMode = "AS-S"
+					currentProfile.LinkedMasterID = linkedMasterID
+					currentProfile.LinkedMasterURL = linkedMasterURL
+					renderSettings(currentProfile, "", "Linked Master URL must be a valid absolute URL (for example https://master.example.com).", true)
+					return
+				}
+				// For Master -> Slave transitions, verify remote master availability first.
+				if currentMode == "AS-M" {
+					status := s.fetchRemoteMasterLinkStatus(linkedMasterURL)
+					if !status.Reachable {
+						reason := strings.TrimSpace(status.Error)
+						if reason == "" {
+							reason = "Master node is not reachable."
+						}
+						currentProfile.ServerMode = "AS-S"
+						currentProfile.LinkedMasterID = linkedMasterID
+						currentProfile.LinkedMasterURL = linkedMasterURL
+						renderSettings(currentProfile, "", "Cannot switch to Slave mode: "+reason, true)
+						return
+					}
+				}
+				if err := s.store.SetServerProfile(r.Context(), models.ServerProfile{
+					ServerMode:      "AS-S",
+					SyncStatus:      "await_updates",
+					LinkedMasterID:  linkedMasterID,
+					LinkedMasterURL: linkedMasterURL,
+				}); err != nil {
+					currentProfile.ServerMode = "AS-S"
+					currentProfile.LinkedMasterID = linkedMasterID
+					currentProfile.LinkedMasterURL = linkedMasterURL
+					renderSettings(currentProfile, "", err.Error(), true)
+					return
+				}
+				renderSettings(models.ServerProfile{
+					ServerMode:      "AS-S",
+					SyncStatus:      "await_updates",
+					LinkedMasterID:  linkedMasterID,
+					LinkedMasterURL: linkedMasterURL,
+				}, "Node mode changed to Slave (AS-S).", "", false)
+				return
+			default:
+				renderSettings(currentProfile, "", "Invalid node mode.", true)
+				return
+			}
 		}
 		pageSize, err := strconv.Atoi(strings.TrimSpace(r.FormValue("page_size")))
 		if err != nil || pageSize < 5 || pageSize > 200 {
@@ -1918,12 +2030,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			APIKey:        apiKey,
 		}
 		s.writeUISettings(w, r, nextSettings)
-		s.renderWithUnlock(w, r, "settings.html", map[string]any{
-			"Title":    "Settings",
-			"Settings": nextSettings,
-			"User":     user,
-			"Message":  "Settings saved.",
-		})
+		settings = nextSettings
+		renderSettings(loadServerProfile(), "Settings saved.", "", false)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -2039,9 +2147,9 @@ func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
 	var viewItems []map[string]any
 	for _, g := range items {
 		viewItems = append(viewItems, map[string]any{
-			"Name": g.Name,
+			"Name":  g.Name,
 			"Count": g.Count,
-			"URL":  "/groups/view?name=" + urlQueryEscape(g.Name),
+			"URL":   "/groups/view?name=" + urlQueryEscape(g.Name),
 		})
 	}
 	viewItems = filterCollectionRows(viewItems, searchField, searchText)
@@ -2092,9 +2200,9 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 	var viewItems []map[string]any
 	for _, t := range items {
 		viewItems = append(viewItems, map[string]any{
-			"Name": t.Name,
+			"Name":  t.Name,
 			"Count": t.Count,
-			"URL":  "/tags/view?name=" + urlQueryEscape(t.Name),
+			"URL":   "/tags/view?name=" + urlQueryEscape(t.Name),
 		})
 	}
 	viewItems = filterCollectionRows(viewItems, searchField, searchText)

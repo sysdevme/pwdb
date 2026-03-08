@@ -3,6 +3,9 @@
 {{ if .Message }}
   <div class="alert alert-success">{{ .Message }}</div>
 {{ end }}
+{{ if .Error }}
+  <div class="alert alert-danger">{{ .Error }}</div>
+{{ end }}
 <div class="card mb-4">
   <div class="card-body">
     <h5 class="card-title">Display And Session</h5>
@@ -46,14 +49,75 @@
   </div>
 </div>
 
-<div class="card">
+<div class="card mb-4">
   <div class="card-body">
-    <h5 class="card-title">Tags And Groups</h5>
-    <p class="text-muted">Management links moved from top menu.</p>
-    <div class="d-flex gap-2">
-      <a class="btn btn-outline-secondary" href="/tags">Open Tags</a>
-      <a class="btn btn-outline-secondary" href="/groups">Open Groups</a>
+    <h5 class="card-title">Node Role</h5>
+    <form method="post" action="/settings">
+      <input type="hidden" name="action" value="server_mode">
+      <div class="mb-3">
+        <label class="form-label d-block">Mode</label>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="server_mode" id="settingsModeMaster" value="AS-M" {{ if or (not .ServerProfile.ServerMode) (eq .ServerProfile.ServerMode "AS-M") }}checked{{ end }}>
+          <label class="form-check-label" for="settingsModeMaster">AS-M (Master)</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="server_mode" id="settingsModeSlave" value="AS-S" {{ if eq .ServerProfile.ServerMode "AS-S" }}checked{{ end }}>
+          <label class="form-check-label" for="settingsModeSlave">AS-S (Slave)</label>
+        </div>
+      </div>
+      <div id="settingsSlaveFields" class="mb-3 {{ if ne .ServerProfile.ServerMode "AS-S" }}d-none{{ end }}">
+        <label class="form-label">Linked Master URL</label>
+        <input type="url" name="linked_master_url" id="settingsLinkedMasterURL" class="form-control" placeholder="https://master.example.com" value="{{ .ServerProfile.LinkedMasterURL }}">
+        <div class="form-text">Required for Slave mode. Master must be reachable before switching from Master to Slave.</div>
+      </div>
+      <div id="settingsSlaveFieldsID" class="mb-3 {{ if ne .ServerProfile.ServerMode "AS-S" }}d-none{{ end }}">
+        <label class="form-label">Linked Master ID (optional)</label>
+        <input type="text" name="linked_master_id" class="form-control" placeholder="master-server-id" value="{{ .ServerProfile.LinkedMasterID }}">
+      </div>
+      <button class="btn btn-primary" type="submit">Save Node Role</button>
+    </form>
+  </div>
+</div>
+
+<div class="modal fade" id="modeChangeErrorModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Unable To Change Node Role</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        {{ if .Error }}{{ .Error }}{{ else }}Cannot change node role.{{ end }}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" data-bs-dismiss="modal">OK</button>
+      </div>
     </div>
   </div>
 </div>
+<script>
+  (function () {
+    const master = document.getElementById("settingsModeMaster");
+    const slave = document.getElementById("settingsModeSlave");
+    const slaveFields = document.getElementById("settingsSlaveFields");
+    const slaveFieldsID = document.getElementById("settingsSlaveFieldsID");
+    const slaveURL = document.getElementById("settingsLinkedMasterURL");
+    function syncMode() {
+      const isSlave = !!(slave && slave.checked);
+      if (slaveFields) slaveFields.classList.toggle("d-none", !isSlave);
+      if (slaveFieldsID) slaveFieldsID.classList.toggle("d-none", !isSlave);
+      if (slaveURL) slaveURL.required = isSlave;
+    }
+    if (master) master.addEventListener("change", syncMode);
+    if (slave) slave.addEventListener("change", syncMode);
+    syncMode();
+  })();
+  (function () {
+    const shouldPopup = {{ if .ModeChangePopup }}true{{ else }}false{{ end }};
+    if (!shouldPopup) return;
+    const modalEl = document.getElementById("modeChangeErrorModal");
+    if (!modalEl || !window.bootstrap) return;
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  })();
+</script>
 {{ end }}
