@@ -1,0 +1,126 @@
+{{ define "content" }}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">Messages</h1>
+  <span class="small text-muted">Short internal messages (max {{ .BodyMax }} chars)</span>
+</div>
+
+{{ if .Message }}
+  <div class="alert alert-info">{{ .Message }}</div>
+{{ end }}
+
+{{ if .Locked }}
+  <div class="alert alert-light border text-muted">Locked. Unlock to send messages or mark them as read.</div>
+{{ end }}
+
+<div class="card mb-4">
+  <div class="card-body">
+    <h2 class="h5">Compose</h2>
+    <form method="post" action="/messages/send">
+      <div class="row g-2">
+        <div class="col-md-4">
+          <select name="to_email" class="form-select" required {{ if .Locked }}disabled{{ end }}>
+            <option value="">Select recipient</option>
+            {{ range .Targets }}
+              <option value="{{ .Email }}">{{ .Email }}</option>
+            {{ end }}
+          </select>
+        </div>
+        <div class="col-md-6">
+          <input type="text" name="body" class="form-control" maxlength="{{ .BodyMax }}" placeholder="Type message..." required {{ if .Locked }}disabled{{ end }}>
+        </div>
+        <div class="col-md-2">
+          <button type="submit" class="btn btn-primary w-100" {{ if .Locked }}disabled{{ end }}>Send</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h5 mb-3">Inbox ({{ .InboxLen }})</h2>
+        {{ if .Inbox }}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>From</th>
+                  <th>Message</th>
+                  <th>Received</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{ range .Inbox }}
+                  <tr>
+                    <td><code>{{ .FromEmail }}</code></td>
+                    <td>{{ .Body }}</td>
+                    <td>{{ .CreatedAt.Format "2006-01-02 15:04:05" }}</td>
+                    <td>
+                      {{ if .IsRead }}
+                        <span class="badge text-bg-success">read</span>
+                      {{ else }}
+                        {{ if $.Locked }}
+                          <span class="badge text-bg-warning">unread</span>
+                        {{ else }}
+                          <form method="post" action="/messages/read" class="d-inline">
+                            <input type="hidden" name="id" value="{{ .ID }}">
+                            <button class="btn btn-sm btn-outline-warning" type="submit">Mark read</button>
+                          </form>
+                        {{ end }}
+                      {{ end }}
+                    </td>
+                  </tr>
+                {{ end }}
+              </tbody>
+            </table>
+          </div>
+        {{ else }}
+          <div class="alert alert-light border text-muted mb-0">No inbox messages.</div>
+        {{ end }}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h5 mb-3">Sent ({{ .SentLen }})</h2>
+        {{ if .Sent }}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>To</th>
+                  <th>Message</th>
+                  <th>Sent</th>
+                  <th>Read</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{ range .Sent }}
+                  <tr>
+                    <td><code>{{ .ToEmail }}</code></td>
+                    <td>{{ .Body }}</td>
+                    <td>{{ .CreatedAt.Format "2006-01-02 15:04:05" }}</td>
+                    <td>
+                      {{ if .IsRead }}
+                        <span class="badge text-bg-success">{{ .ReadAt.Format "2006-01-02 15:04:05" }}</span>
+                      {{ else }}
+                        <span class="badge text-bg-secondary">pending</span>
+                      {{ end }}
+                    </td>
+                  </tr>
+                {{ end }}
+              </tbody>
+            </table>
+          </div>
+        {{ else }}
+          <div class="alert alert-light border text-muted mb-0">No sent messages.</div>
+        {{ end }}
+      </div>
+    </div>
+  </div>
+</div>
+{{ end }}

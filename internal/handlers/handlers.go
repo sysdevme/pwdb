@@ -39,7 +39,7 @@ const userCtxKey ctxKey = 1
 const (
 	defaultPageSize               = 10
 	defaultUnlockMinutes          = 5
-	defaultAppVersion             = "4.0.4"
+	defaultAppVersion             = "4.0.6"
 	defaultBuildAuthor            = "unknown"
 	defaultBuildLastUpdate        = "unknown"
 	controllerHealthcheckInterval = 30 * time.Second
@@ -99,6 +99,12 @@ type buildMetadata struct {
 	Author     string `json:"author"`
 	LastUpdate string `json:"last_update"`
 	RepoURL    string `json:"repo_url"`
+}
+
+type breadcrumbItem struct {
+	Label  string
+	Href   string
+	Active bool
 }
 
 type Server struct {
@@ -193,6 +199,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/notes/delete", s.handleNoteDelete)
 	mux.HandleFunc("/notes/view", s.handleNoteView)
 	mux.HandleFunc("/notes/share", s.handleNoteShare)
+	mux.HandleFunc("/messages", s.handleMessagesPage)
+	mux.HandleFunc("/messages/send", s.handleMessageSend)
+	mux.HandleFunc("/messages/read", s.handleMessageRead)
 	mux.HandleFunc("/groups", s.handleGroups)
 	mux.HandleFunc("/groups/edit", s.handleGroupEdit)
 	mux.HandleFunc("/groups/remove", s.handleGroupRemove)
@@ -933,8 +942,21 @@ func (s *Server) handlePasswords(w http.ResponseWriter, r *http.Request) {
 	var viewItems []map[string]string
 	for _, item := range items {
 		sharedLabel := ""
+		sharedBy := ""
+		sharedByName := ""
+		sharedAt := ""
+		sharedAtISO := ""
 		if item.UserID != user.ID && item.OwnerEmail != "" {
 			sharedLabel = "Shared by " + item.OwnerEmail
+			sharedBy = item.OwnerEmail
+			sharedByName = strings.TrimSpace(strings.Split(item.OwnerEmail, "@")[0])
+			if sharedByName == "" {
+				sharedByName = item.OwnerEmail
+			}
+			if !item.SharedAt.IsZero() {
+				sharedAt = item.SharedAt.Format("2006-01-02 15:04:05")
+				sharedAtISO = item.SharedAt.Format(time.RFC3339)
+			}
 		}
 		viewItems = append(viewItems, map[string]string{
 			"ID":          item.ID,
@@ -944,6 +966,10 @@ func (s *Server) handlePasswords(w http.ResponseWriter, r *http.Request) {
 			"Tags":        strings.Join(item.Tags, ", "),
 			"Groups":      strings.Join(item.Groups, ", "),
 			"SharedLabel": sharedLabel,
+			"SharedBy":    sharedBy,
+			"SharedByName": sharedByName,
+			"SharedAt":    sharedAt,
+			"SharedAtISO": sharedAtISO,
 			"CanManage":   fmt.Sprintf("%t", item.UserID == user.ID),
 		})
 	}
@@ -1175,15 +1201,26 @@ func (s *Server) handlePasswordDelete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		entry, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
-		if err != nil || entry.UserID != user.ID {
+		if err != nil {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		canManage := entry.UserID == user.ID
+		title := "Delete Password"
+		actionLabel := "Delete"
+		confirmText := "This action cannot be undone."
+		if !canManage {
+			title = "Unshare Password"
+			actionLabel = "Unshare"
+			confirmText = "This removes shared access only for your account."
+		}
 		s.renderWithUnlock(w, r, "delete_confirm.html", map[string]any{
-			"Title":      "Delete Password",
-			"ItemID":     entry.ID,
-			"ItemName":   entry.Title,
-			"DeletePath": "/passwords/delete",
+			"Title":       title,
+			"ItemID":      entry.ID,
+			"ItemName":    entry.Title,
+			"DeletePath":  "/passwords/delete",
+			"ActionLabel": actionLabel,
+			"ConfirmText": confirmText,
 		})
 	case http.MethodPost:
 		if err := r.ParseForm(); err != nil {
@@ -1200,9 +1237,21 @@ func (s *Server) handlePasswordDelete(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		if err := s.store.DeletePassword(r.Context(), user.ID, id); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		entry, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
 			return
+		}
+		if entry.UserID == user.ID {
+			if err := s.store.DeletePassword(r.Context(), user.ID, id); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		} else {
+			if err := s.store.UnsharePasswordForUser(r.Context(), id, user.ID); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 		}
 		http.Redirect(w, r, "/passwords", http.StatusSeeOther)
 	default:
@@ -1795,6 +1844,99 @@ func (s *Server) handleNoteShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderNoteView(w, r, user, updated, true, "Secure note shared.")
+}
+
+func (s *Server) handleMessagesPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	message := strings.TrimSpace(r.URL.Query().Get("msg"))
+	inbox, err := s.store.ListInboxMessages(r.Context(), user.ID, 100)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	sent, err := s.store.ListSentMessages(r.Context(), user.ID, 100)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	targets, err := s.store.ListActiveUsersExcept(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderWithUnlock(w, r, "messages.html", map[string]any{
+		"Title":    "Messages",
+		"Message":  message,
+		"Inbox":    inbox,
+		"Sent":     sent,
+		"Targets":  targets,
+		"Locked":   !s.isUnlocked(r),
+		"BodyMax":  300,
+		"InboxLen": len(inbox),
+		"SentLen":  len(sent),
+	})
+}
+
+func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	toEmail := strings.TrimSpace(r.FormValue("to_email"))
+	body := strings.TrimSpace(r.FormValue("body"))
+	if err := s.store.SendInternalMessage(r.Context(), user.ID, toEmail, body); err != nil {
+		http.Redirect(w, r, "/messages?msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/messages?msg="+url.QueryEscape("Message sent."), http.StatusSeeOther)
+}
+
+func (s *Server) handleMessageRead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	messageID := strings.TrimSpace(r.FormValue("id"))
+	if messageID == "" {
+		http.Redirect(w, r, "/messages", http.StatusSeeOther)
+		return
+	}
+	_ = s.store.MarkMessageRead(r.Context(), user.ID, messageID)
+	http.Redirect(w, r, "/messages", http.StatusSeeOther)
 }
 
 func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
@@ -2721,7 +2863,7 @@ func (s *Server) handleAdminAboutPage(w http.ResponseWriter, r *http.Request) {
 	}
 	version, author, lastUpdate, repoURL := s.loadBuildMetadata()
 	s.renderWithUnlock(w, r, "admin_about.html", map[string]any{
-		"Title":           "Admin - About",
+		"Title":           "About",
 		"BuildVersion":    version,
 		"BuildAuthor":     author,
 		"BuildLastUpdate": lastUpdate,
@@ -3398,6 +3540,8 @@ func (s *Server) renderWithUnlock(w http.ResponseWriter, r *http.Request, page s
 	data["Unlocked"] = s.isUnlocked(r)
 	data["UnlockSeconds"] = s.unlockRemainingSeconds(r)
 	data["RequestPath"] = r.URL.Path
+	data["Breadcrumbs"] = buildBreadcrumbs(r.URL.Path)
+	data["UnreadMessages"] = 0
 	if profile, err := s.store.GetServerProfile(r.Context()); err == nil {
 		if strings.TrimSpace(profile.AppVersion) != "" {
 			data["AppVersion"] = strings.TrimSpace(profile.AppVersion)
@@ -3415,6 +3559,9 @@ func (s *Server) renderWithUnlock(w http.ResponseWriter, r *http.Request, page s
 	if user, ok := s.currentUser(r); ok {
 		data["CurrentUserEmail"] = user.Email
 		data["IsAdmin"] = user.IsAdmin
+		if unread, err := s.store.CountUnreadMessages(r.Context(), user.ID); err == nil {
+			data["UnreadMessages"] = unread
+		}
 	}
 	buildVersion, buildAuthor, buildLastUpdate, buildRepoURL := s.loadBuildMetadata()
 	data["BuildVersion"] = buildVersion
@@ -3454,6 +3601,89 @@ func (s *Server) loadBuildMetadata() (string, string, string, string) {
 		buildRepoURL = strings.TrimSpace(meta.RepoURL)
 	}
 	return buildVersion, buildAuthor, buildLastUpdate, buildRepoURL
+}
+
+func buildBreadcrumbs(path string) []breadcrumbItem {
+	path = strings.TrimSpace(path)
+	if path == "" || path == "/" {
+		return []breadcrumbItem{
+			{Label: "Dashboard", Href: "/", Active: true},
+		}
+	}
+	trimmed := strings.Trim(path, "/")
+	if trimmed == "" {
+		return []breadcrumbItem{
+			{Label: "Dashboard", Href: "/", Active: true},
+		}
+	}
+
+	segments := strings.Split(trimmed, "/")
+	items := make([]breadcrumbItem, 0, len(segments)+1)
+	items = append(items, breadcrumbItem{
+		Label:  "Dashboard",
+		Href:   "/",
+		Active: false,
+	})
+
+	currentPath := ""
+	for i, seg := range segments {
+		currentPath += "/" + seg
+		label := breadcrumbLabel(seg)
+		active := i == len(segments)-1
+		href := currentPath
+		if active {
+			href = ""
+		}
+		items = append(items, breadcrumbItem{
+			Label:  label,
+			Href:   href,
+			Active: active,
+		})
+	}
+	return items
+}
+
+func breadcrumbLabel(segment string) string {
+	segment = strings.TrimSpace(strings.ToLower(segment))
+	switch segment {
+	case "":
+		return "Dashboard"
+	case "admin":
+		return "Admin"
+	case "users":
+		return "Users"
+	case "create":
+		return "Create"
+	case "list":
+		return "List"
+	case "about":
+		return "About"
+	case "passwords":
+		return "Passwords"
+	case "notes":
+		return "Secure Notes"
+	case "groups":
+		return "Groups"
+	case "tags":
+		return "Tags"
+	case "settings":
+		return "Settings"
+	case "account":
+		return "Profile"
+	case "import":
+		return "Import"
+	case "messages":
+		return "Messages"
+	}
+	segment = strings.ReplaceAll(segment, "-", " ")
+	parts := strings.Fields(segment)
+	for i, part := range parts {
+		parts[i] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	if len(parts) == 0 {
+		return "Item"
+	}
+	return strings.Join(parts, " ")
 }
 
 func (s *Server) handleUnlockPage(w http.ResponseWriter, r *http.Request) {

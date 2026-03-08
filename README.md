@@ -49,6 +49,8 @@ Login:
 - Tags and groups collection pages rendered as cards with `Edit` and `Remove` actions
 - Search filters and pagination on list pages
 - Sharing items with other active users (shared items are recipient read-only)
+- Internal user-to-user short messages (`Messages` page, max 300 chars)
+- Shared password recipient action is `Unshare` (removes own access only; does not delete owner record)
 - Pending -> active user lifecycle on first successful login
 - Timed unlock session with manual lock
 - Account page for user credential updates
@@ -211,6 +213,7 @@ Keep/customize them per environment.
 - `012_controller_update_events.sql`
 - `013_controller_links_handshake.sql`
 - `014_controller_registry.sql`
+- `017_internal_messages.sql`
 
 ## Recent fixed bugs
 

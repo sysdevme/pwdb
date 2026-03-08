@@ -51,6 +51,7 @@ const (
 
 	sqlListPasswords = `
 		SELECT p.id, p.user_id, owner.email, p.title, p.username, p.url,
+			   MAX(pes.created_at) AS shared_at,
 			   COALESCE(string_agg(DISTINCT t.name, ','), '') AS tags,
 			   COALESCE(string_agg(DISTINCT g.name, ','), '') AS groups
 		FROM password_entries p
@@ -533,6 +534,11 @@ const (
 		ON CONFLICT DO NOTHING
 	`
 
+	sqlDeletePasswordShareForUser = `
+		DELETE FROM password_entry_shares
+		WHERE entry_id = $1 AND user_id = $2
+	`
+
 	sqlInsertNoteShare = `
 		INSERT INTO secure_note_shares (note_id, user_id)
 		VALUES ($1, $2)
@@ -553,6 +559,51 @@ const (
 		JOIN users u ON u.id = sns.user_id
 		WHERE sns.note_id = $1
 		ORDER BY u.email ASC
+	`
+
+	sqlFindActiveUserIDByEmail = `
+		SELECT id
+		FROM users
+		WHERE email = $1 AND status = 'active'
+	`
+
+	sqlInsertInternalMessage = `
+		INSERT INTO internal_messages (id, from_user_id, to_user_id, body)
+		VALUES ($1, $2, $3, $4)
+	`
+
+	sqlListInboxMessages = `
+		SELECT m.id, m.from_user_id, sender.email, m.to_user_id, recipient.email, m.body, m.read_at, m.created_at
+		FROM internal_messages m
+		JOIN users sender ON sender.id = m.from_user_id
+		JOIN users recipient ON recipient.id = m.to_user_id
+		WHERE m.to_user_id = $1
+		ORDER BY m.created_at DESC
+		LIMIT $2
+	`
+
+	sqlListSentMessages = `
+		SELECT m.id, m.from_user_id, sender.email, m.to_user_id, recipient.email, m.body, m.read_at, m.created_at
+		FROM internal_messages m
+		JOIN users sender ON sender.id = m.from_user_id
+		JOIN users recipient ON recipient.id = m.to_user_id
+		WHERE m.from_user_id = $1
+		ORDER BY m.created_at DESC
+		LIMIT $2
+	`
+
+	sqlMarkMessageRead = `
+		UPDATE internal_messages
+		SET read_at = NOW()
+		WHERE id = $1
+		  AND to_user_id = $2
+		  AND read_at IS NULL
+	`
+
+	sqlCountUnreadMessages = `
+		SELECT COUNT(*)
+		FROM internal_messages
+		WHERE to_user_id = $1 AND read_at IS NULL
 	`
 
 	sqlCreatePasswordShareLink = `

@@ -6,6 +6,7 @@ type PasswordEntry struct {
 	ID           string
 	UserID       string
 	OwnerEmail   string `json:"-"`
+	SharedAt     time.Time
 	Title        string
 	Username     string
 	Password     string
@@ -135,4 +136,16 @@ type ControllerRegistryEntry struct {
 	LastSeenAt     time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+}
+
+type InternalMessage struct {
+	ID             string
+	FromUserID     string
+	FromEmail      string
+	ToUserID       string
+	ToEmail        string
+	Body           string
+	ReadAt         time.Time
+	CreatedAt      time.Time
+	IsRead         bool
 }

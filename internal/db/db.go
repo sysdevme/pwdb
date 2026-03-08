@@ -150,10 +150,11 @@ func (s *Store) ListPasswords(ctx context.Context, userID string) ([]models.Pass
 		var ownerID uuid.UUID
 		var ownerEmail string
 		var title, username, url, tags, groups string
-		if err := rows.Scan(&id, &ownerID, &ownerEmail, &title, &username, &url, &tags, &groups); err != nil {
+		var sharedAt *time.Time
+		if err := rows.Scan(&id, &ownerID, &ownerEmail, &title, &username, &url, &sharedAt, &tags, &groups); err != nil {
 			return nil, err
 		}
-		items = append(items, models.PasswordEntry{
+		entry := models.PasswordEntry{
 			ID:         id.String(),
 			UserID:     ownerID.String(),
 			OwnerEmail: ownerEmail,
@@ -162,7 +163,11 @@ func (s *Store) ListPasswords(ctx context.Context, userID string) ([]models.Pass
 			URL:        url,
 			Tags:       splitTags(tags),
 			Groups:     splitTags(groups),
-		})
+		}
+		if sharedAt != nil {
+			entry.SharedAt = *sharedAt
+		}
+		items = append(items, entry)
 	}
 	return items, rows.Err()
 }
@@ -604,7 +609,7 @@ func (s *Store) SetServerProfile(ctx context.Context, profile models.ServerProfi
 		appVersion = strings.TrimSpace(os.Getenv("APP_VERSION"))
 	}
 	if appVersion == "" {
-		appVersion = "4.0.4"
+		appVersion = "4.0.6"
 	}
 	_, err = s.pool.Exec(
 		ctx,
@@ -1276,6 +1281,25 @@ func (s *Store) SharePasswordWithUser(ctx context.Context, ownerUserID, entryID,
 	return err
 }
 
+func (s *Store) UnsharePasswordForUser(ctx context.Context, entryID, userID string) error {
+	entryUUID, err := uuid.Parse(entryID)
+	if err != nil {
+		return err
+	}
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, sqlDeletePasswordShareForUser, entryUUID, userUUID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("shared access not found")
+	}
+	return nil
+}
+
 func (s *Store) ShareNoteWithUser(ctx context.Context, ownerUserID, noteID, targetEmail string) error {
 	ownerID, err := uuid.Parse(ownerUserID)
 	if err != nil {
@@ -1358,6 +1382,123 @@ func (s *Store) GetActiveUserByEmail(ctx context.Context, email string) (models.
 	}
 	user.ID = id.String()
 	return user, nil
+}
+
+func (s *Store) SendInternalMessage(ctx context.Context, fromUserID string, toEmail string, body string) error {
+	fromUUID, err := uuid.Parse(fromUserID)
+	if err != nil {
+		return err
+	}
+	trimmedBody := strings.TrimSpace(body)
+	if trimmedBody == "" {
+		return errors.New("message body is required")
+	}
+	if len(trimmedBody) > 300 {
+		return errors.New("message must be 300 characters or less")
+	}
+	var toUUID uuid.UUID
+	if err := s.pool.QueryRow(ctx, sqlFindActiveUserIDByEmail, strings.TrimSpace(toEmail)).Scan(&toUUID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("active recipient not found")
+		}
+		return err
+	}
+	if fromUUID == toUUID {
+		return errors.New("cannot send message to yourself")
+	}
+	_, err = s.pool.Exec(ctx, sqlInsertInternalMessage, uuid.New(), fromUUID, toUUID, trimmedBody)
+	return err
+}
+
+func (s *Store) ListInboxMessages(ctx context.Context, userID string, limit int) ([]models.InternalMessage, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, sqlListInboxMessages, userUUID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.InternalMessage
+	for rows.Next() {
+		var item models.InternalMessage
+		var id, fromID, toID uuid.UUID
+		var readAt *time.Time
+		if err := rows.Scan(&id, &fromID, &item.FromEmail, &toID, &item.ToEmail, &item.Body, &readAt, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		item.ID = id.String()
+		item.FromUserID = fromID.String()
+		item.ToUserID = toID.String()
+		if readAt != nil {
+			item.ReadAt = *readAt
+			item.IsRead = true
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListSentMessages(ctx context.Context, userID string, limit int) ([]models.InternalMessage, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, sqlListSentMessages, userUUID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.InternalMessage
+	for rows.Next() {
+		var item models.InternalMessage
+		var id, fromID, toID uuid.UUID
+		var readAt *time.Time
+		if err := rows.Scan(&id, &fromID, &item.FromEmail, &toID, &item.ToEmail, &item.Body, &readAt, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		item.ID = id.String()
+		item.FromUserID = fromID.String()
+		item.ToUserID = toID.String()
+		if readAt != nil {
+			item.ReadAt = *readAt
+			item.IsRead = true
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) MarkMessageRead(ctx context.Context, userID, messageID string) error {
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	messageUUID, err := uuid.Parse(messageID)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, sqlMarkMessageRead, messageUUID, userUUID)
+	return err
+}
+
+func (s *Store) CountUnreadMessages(ctx context.Context, userID string) (int, error) {
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	if err := s.pool.QueryRow(ctx, sqlCountUnreadMessages, userUUID).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (s *Store) CreatePasswordShareLink(ctx context.Context, token string, entryID string, createdBy string, expiresAt time.Time) error {
