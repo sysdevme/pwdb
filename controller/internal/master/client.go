@@ -3,6 +3,7 @@ package master
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,28 +19,28 @@ type ControllerInfo struct {
 }
 
 type Client struct {
-	baseURL     string
-	bootstrap   string
-	rotate      string
-	listPath    string
-	pairPath    string
+	baseURL         string
+	bootstrap       string
+	rotate          string
+	listPath        string
+	pairPath        string
 	updateAckPath   string
 	updateApplyPath string
-	sharedToken string
-	http        *http.Client
+	sharedToken     string
+	http            *http.Client
 }
 
 func New(baseURL string, timeout time.Duration, bootstrapPath string, rotatePath string, listPath string, pairPath string, updateAckPath string, updateApplyPath string, sharedToken string) *Client {
 	return &Client{
-		baseURL:     strings.TrimRight(baseURL, "/"),
-		bootstrap:   bootstrapPath,
-		rotate:      rotatePath,
-		listPath:    listPath,
-		pairPath:    pairPath,
+		baseURL:         strings.TrimRight(baseURL, "/"),
+		bootstrap:       bootstrapPath,
+		rotate:          rotatePath,
+		listPath:        listPath,
+		pairPath:        pairPath,
 		updateAckPath:   updateAckPath,
 		updateApplyPath: updateApplyPath,
-		sharedToken: strings.TrimSpace(sharedToken),
-		http:        &http.Client{Timeout: timeout},
+		sharedToken:     strings.TrimSpace(sharedToken),
+		http:            &http.Client{Timeout: timeout},
 	}
 }
 
@@ -52,11 +53,34 @@ type tokenResp struct {
 	NextToken string `json:"next_token"`
 }
 
+type bootstrapResp struct {
+	Status    string `json:"status"`
+	Approved  bool   `json:"approved"`
+	NextToken string `json:"next_token"`
+}
+
+type PendingApprovalError struct {
+	Body string
+}
+
+func (e PendingApprovalError) Error() string {
+	return "bootstrap pending approval"
+}
+
 func (c *Client) Bootstrap(controllerID string, masterKey string) (string, error) {
 	payload := bootstrapReq{ControllerID: controllerID, MasterKey: masterKey}
 	respBody, status, err := c.postJSON(c.bootstrap, payload, "")
 	if err != nil {
 		return "", err
+	}
+	if status == http.StatusAccepted {
+		var br bootstrapResp
+		if err := json.Unmarshal(respBody, &br); err == nil {
+			if strings.EqualFold(strings.TrimSpace(br.Status), "pending_approval") || !br.Approved {
+				return "", PendingApprovalError{Body: strings.TrimSpace(string(respBody))}
+			}
+		}
+		return "", fmt.Errorf("bootstrap failed: status=%d body=%s", status, strings.TrimSpace(string(respBody)))
 	}
 	if status != http.StatusOK {
 		return "", fmt.Errorf("bootstrap failed: status=%d body=%s", status, strings.TrimSpace(string(respBody)))
@@ -69,6 +93,11 @@ func (c *Client) Bootstrap(controllerID string, masterKey string) (string, error
 		return "", fmt.Errorf("bootstrap response missing next_token")
 	}
 	return tr.NextToken, nil
+}
+
+func IsPendingApproval(err error) bool {
+	var pendingErr PendingApprovalError
+	return errors.As(err, &pendingErr)
 }
 
 func (c *Client) Rotate(controllerID string, token string) (string, error) {

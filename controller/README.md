@@ -27,6 +27,7 @@ Important fields:
 - `sync_interval_sec`: worker sync interval in seconds (default `30`)
 - `master.base_url`: master PWDB URL
 - `master.port`: optional override for master access port (if set, replaces port from `master.base_url`)
+- `master.master_key`: optional bootstrap key used for auto-bootstrap when token is empty
 - `slave.default_port`: optional default port used when `slave_url` is registered without explicit port
 - `master.bootstrap_path`: endpoint for key authentication
 - `master.rotate_path`: endpoint for token rotation
@@ -111,6 +112,12 @@ Body:
 `POST /v1/slaves/sync`
 
 Returns sync counters including `updates_sent`.
+
+## Auto-bootstrap behavior
+
+- If `master.master_key` is set and controller token is empty, worker auto-calls bootstrap.
+- If master returns `pending_approval`, controller waits and retries automatically on worker interval.
+- After admin approval on master, a later auto-bootstrap obtains token and sync starts without manual curl.
 
 ## Notes
 

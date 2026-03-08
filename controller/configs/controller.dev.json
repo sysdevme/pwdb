@@ -7,6 +7,7 @@
   "master": {
     "base_url": "http://127.0.0.1:8080",
     "port": 8080,
+    "master_key": "",
     "bootstrap_path": "/controller/auth/bootstrap",
     "rotate_path": "/controller/auth/rotate",
     "controllers_path": "/controller/controllers",

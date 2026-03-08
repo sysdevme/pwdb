@@ -13,6 +13,7 @@ import (
 type MasterConfig struct {
 	BaseURL         string `json:"base_url"`
 	Port            int    `json:"port"`
+	MasterKey       string `json:"master_key"`
 	BootstrapPath   string `json:"bootstrap_path"`
 	RotatePath      string `json:"rotate_path"`
 	ControllersPath string `json:"controllers_path"`
@@ -102,6 +103,7 @@ func (c *Config) Normalize() error {
 	if strings.TrimSpace(c.Master.UpdateApplyPath) == "" {
 		c.Master.UpdateApplyPath = "/controller/update/apply"
 	}
+	c.Master.MasterKey = strings.TrimSpace(c.Master.MasterKey)
 	c.Master.SharedToken = strings.TrimSpace(c.Master.SharedToken)
 	if c.Slave.DefaultPort < 0 || c.Slave.DefaultPort > 65535 {
 		return fmt.Errorf("slave.default_port must be between 1 and 65535")

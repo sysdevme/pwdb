@@ -145,6 +145,13 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := s.master.Bootstrap(s.cfg.ControllerID, in.MasterKey)
 	if err != nil {
+		if master.IsPendingApproval(err) {
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"status":   "pending_approval",
+				"approved": false,
+			})
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -346,6 +353,25 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 
 	st := s.state.Snapshot()
 	if strings.TrimSpace(st.CurrentToken) == "" {
+		masterKey := strings.TrimSpace(s.cfg.Master.MasterKey)
+		if masterKey != "" {
+			token, err := s.master.Bootstrap(s.cfg.ControllerID, masterKey)
+			if err != nil {
+				if master.IsPendingApproval(err) {
+					s.setPending("controller is pending master approval")
+					return syncResult{}, nil
+				}
+				s.setFailure(err)
+				return syncResult{}, err
+			}
+			if err := s.state.SetToken(token); err != nil {
+				s.setFailure(err)
+				return syncResult{}, err
+			}
+			st = s.state.Snapshot()
+		}
+	}
+	if strings.TrimSpace(st.CurrentToken) == "" {
 		err := errors.New("controller token is empty, bootstrap first")
 		s.setFailure(err)
 		return syncResult{}, err
@@ -477,6 +503,12 @@ func (s *Server) setFailure(err error) {
 	defer s.statusMu.Unlock()
 	s.status.ConsecutiveFailures++
 	s.status.LastError = err.Error()
+}
+
+func (s *Server) setPending(msg string) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	s.status.LastError = msg
 }
 
 func (s *Server) setNextAttempt(at time.Time) {

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -11,17 +10,24 @@ import (
 )
 
 type fakeMaster struct {
-	controllers []master.ControllerInfo
-	nextToken   string
-	listErr     error
-	pairErrFor  map[string]error
-	pairCalls   []string
-	applyCalls  []string
-	ackCalls    []string
+	controllers    []master.ControllerInfo
+	nextToken      string
+	listErr        error
+	pairErrFor     map[string]error
+	pairCalls      []string
+	applyCalls     []string
+	ackCalls       []string
+	bootstrapToken string
+	bootstrapErr   error
+	bootstrapCalls int
 }
 
 func (f *fakeMaster) Bootstrap(controllerID string, masterKey string) (string, error) {
-	return "", errors.New("not used in this test")
+	f.bootstrapCalls++
+	if f.bootstrapErr != nil {
+		return "", f.bootstrapErr
+	}
+	return f.bootstrapToken, nil
 }
 
 func (f *fakeMaster) ListControllers(token string) ([]master.ControllerInfo, string, error) {
@@ -159,5 +165,77 @@ func TestNextBackoffCaps(t *testing.T) {
 	got := nextBackoff(base, 10)
 	if got != 5*time.Minute {
 		t.Fatalf("expected capped backoff 5m, got %v", got)
+	}
+}
+
+func TestSyncSlavesWithMasterAutoBootstrapSuccess(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewStateStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatalf("NewStateStore error: %v", err)
+	}
+
+	fm := &fakeMaster{
+		controllers:    []master.ControllerInfo{},
+		nextToken:      "token-rotated",
+		bootstrapToken: "token-bootstrapped",
+	}
+
+	srv := New(config.Config{
+		ControllerID: "controller-01",
+		Master:       config.MasterConfig{MasterKey: "key-1"},
+	}, fm, store)
+
+	res, err := srv.syncSlavesWithMaster()
+	if err != nil {
+		t.Fatalf("syncSlavesWithMaster error: %v", err)
+	}
+	if res != (syncResult{}) {
+		t.Fatalf("expected empty sync result with no slaves, got %+v", res)
+	}
+	if fm.bootstrapCalls != 1 {
+		t.Fatalf("expected exactly one bootstrap call, got %d", fm.bootstrapCalls)
+	}
+
+	st := store.Snapshot()
+	if st.CurrentToken != "token-bootstrapped" {
+		t.Fatalf("expected bootstrapped token, got %q", st.CurrentToken)
+	}
+}
+
+func TestSyncSlavesWithMasterAutoBootstrapPendingApproval(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewStateStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatalf("NewStateStore error: %v", err)
+	}
+
+	fm := &fakeMaster{
+		bootstrapErr: master.PendingApprovalError{Body: `{"status":"pending_approval","approved":false}`},
+	}
+	srv := New(config.Config{
+		ControllerID: "controller-01",
+		Master:       config.MasterConfig{MasterKey: "key-1"},
+	}, fm, store)
+
+	res, err := srv.syncSlavesWithMaster()
+	if err != nil {
+		t.Fatalf("expected pending approval to be non-fatal, got err=%v", err)
+	}
+	if res != (syncResult{}) {
+		t.Fatalf("expected empty sync result on pending approval, got %+v", res)
+	}
+	if fm.bootstrapCalls != 1 {
+		t.Fatalf("expected bootstrap call, got %d", fm.bootstrapCalls)
+	}
+
+	status := srv.getStatus()
+	if status.LastError != "controller is pending master approval" {
+		t.Fatalf("expected pending approval status message, got %q", status.LastError)
+	}
+	if status.ConsecutiveFailures != 0 {
+		t.Fatalf("expected no failure increment on pending approval, got %d", status.ConsecutiveFailures)
 	}
 }
