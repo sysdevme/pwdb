@@ -113,12 +113,23 @@ Embedded controller status (`controller/`):
 
 Controller run (from this repository):
 
+Windows (PowerShell):
+
 ```powershell
 cd E:\pwdb-main\controller
 go run ./cmd/controller -config configs/controller.dev.json
 ```
 
+Linux/macOS (bash):
+
+```bash
+cd /opt/pwdb-main/controller
+go run ./cmd/controller -config configs/controller.dev.json
+```
+
 Bootstrap controller against master:
+
+Windows (PowerShell):
 
 ```powershell
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:9091/v1/master/bootstrap" `
@@ -126,10 +137,26 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:9091/v1/master/bootstrap" 
   -Body (@{ master_key = "<CONTROLLER_MASTER_KEY>" } | ConvertTo-Json -Compress)
 ```
 
+Linux/macOS (bash):
+
+```bash
+curl -sS -X POST "http://127.0.0.1:9091/v1/master/bootstrap" \
+  -H "Content-Type: application/json" \
+  -d '{"master_key":"<CONTROLLER_MASTER_KEY>"}'
+```
+
 Then list visible controllers (token rotates each call):
+
+Windows (PowerShell):
 
 ```powershell
 curl.exe -sS http://127.0.0.1:9091/v1/master/controllers
+```
+
+Linux/macOS (bash):
+
+```bash
+curl -sS http://127.0.0.1:9091/v1/master/controllers
 ```
 
 ## Environment
@@ -155,6 +182,20 @@ Optional UI service restart controls:
 - `UI_SERVICE_RESTART_ENABLED`
 - `UI_SERVICE_RESTART_COMMAND`
 - `UI_SERVICE_RESTART_ARGS`
+
+## App version metadata
+
+Application version metadata is stored in:
+
+- `static/version.json`
+
+Fields:
+
+- `version`
+- `author`
+- `last_update`
+
+The navbar brand section reads this file and shows `v<version> | <author> | <last_update>` near `Un1t PM`.
 
 ## Local dev scripts
 

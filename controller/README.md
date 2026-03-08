@@ -36,8 +36,17 @@ Important fields:
 
 ## Run
 
+Windows (PowerShell):
+
 ```powershell
 cd E:\pwdb-main\controller
+go run ./cmd/controller -config configs/controller.dev.json
+```
+
+Linux/macOS (bash):
+
+```bash
+cd /opt/pwdb-main/controller
 go run ./cmd/controller -config configs/controller.dev.json
 ```
 
