@@ -87,6 +87,15 @@ Current protocol endpoints:
 - Master -> Slave:
   - `GET /controller/health`
 
+Controller companion status (`pwdb-controller`, separate repo/worktree):
+
+- Background worker loop with retry backoff
+- Pair relay + automatic slave update apply + master ACK relay
+- Local persisted sync metadata per slave (`last_synced_version`, `last_synced_event_id`, `last_sync_error`)
+- Manual controller endpoints:
+  - `POST /v1/slaves/sync`
+  - `POST /v1/slaves/unregister`
+
 ## Environment
 
 Copy `.env.example` to `.env` and adjust values.
