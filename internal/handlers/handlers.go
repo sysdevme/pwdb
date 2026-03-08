@@ -39,6 +39,7 @@ const userCtxKey ctxKey = 1
 const (
 	defaultPageSize               = 10
 	defaultUnlockMinutes          = 5
+	defaultAppVersion             = "4.0.4"
 	controllerHealthcheckInterval = 30 * time.Second
 	controllerHealthcheckTimeout  = 5 * time.Second
 	serviceRestartTriggerDelay    = 500 * time.Millisecond
@@ -3359,10 +3360,18 @@ func (s *Server) renderWithUnlock(w http.ResponseWriter, r *http.Request, page s
 	if data == nil {
 		data = map[string]any{}
 	}
+	appVersion := strings.TrimSpace(os.Getenv("APP_VERSION"))
+	if appVersion == "" {
+		appVersion = defaultAppVersion
+	}
+	data["AppVersion"] = appVersion
 	data["Unlocked"] = s.isUnlocked(r)
 	data["UnlockSeconds"] = s.unlockRemainingSeconds(r)
 	data["RequestPath"] = r.URL.Path
 	if profile, err := s.store.GetServerProfile(r.Context()); err == nil {
+		if strings.TrimSpace(profile.AppVersion) != "" {
+			data["AppVersion"] = strings.TrimSpace(profile.AppVersion)
+		}
 		data["ServerMode"] = profile.ServerMode
 		switch profile.ServerMode {
 		case "AS-M":

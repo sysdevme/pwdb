@@ -5,7 +5,7 @@ import "time"
 type PasswordEntry struct {
 	ID           string
 	UserID       string
-	OwnerEmail    string `json:"-"`
+	OwnerEmail   string `json:"-"`
 	Title        string
 	Username     string
 	Password     string
@@ -22,7 +22,7 @@ type PasswordEntry struct {
 type SecureNote struct {
 	ID           string
 	UserID       string
-	OwnerEmail    string `json:"-"`
+	OwnerEmail   string `json:"-"`
 	Title        string
 	Body         string
 	Tags         []string
@@ -98,13 +98,14 @@ type PasswordShareLink struct {
 }
 
 type ServerProfile struct {
-	ServerMode     string
-	SyncStatus     string
-	LinkedMasterID string
+	ServerMode      string
+	SyncStatus      string
+	LinkedMasterID  string
 	LinkedMasterURL string
-	LastPairingPIN string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	AppVersion      string
+	LastPairingPIN  string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type ControllerLink struct {

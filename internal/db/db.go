@@ -599,6 +599,13 @@ func (s *Store) SetServerProfile(ctx context.Context, profile models.ServerProfi
 	if err != nil {
 		return err
 	}
+	appVersion := strings.TrimSpace(profile.AppVersion)
+	if appVersion == "" {
+		appVersion = strings.TrimSpace(os.Getenv("APP_VERSION"))
+	}
+	if appVersion == "" {
+		appVersion = "4.0.4"
+	}
 	_, err = s.pool.Exec(
 		ctx,
 		sqlUpsertServerProfile,
@@ -606,6 +613,7 @@ func (s *Store) SetServerProfile(ctx context.Context, profile models.ServerProfi
 		status,
 		nullIfEmpty(profile.LinkedMasterID),
 		nullIfEmpty(profile.LinkedMasterURL),
+		appVersion,
 	)
 	return err
 }
@@ -614,11 +622,13 @@ func (s *Store) GetServerProfile(ctx context.Context) (models.ServerProfile, err
 	var profile models.ServerProfile
 	var linkedMasterID *string
 	var linkedMasterURL *string
+	var appVersion *string
 	err := s.pool.QueryRow(ctx, sqlGetServerProfile).Scan(
 		&profile.ServerMode,
 		&profile.SyncStatus,
 		&linkedMasterID,
 		&linkedMasterURL,
+		&appVersion,
 		&profile.CreatedAt,
 		&profile.UpdatedAt,
 	)
@@ -630,6 +640,9 @@ func (s *Store) GetServerProfile(ctx context.Context) (models.ServerProfile, err
 	}
 	if linkedMasterURL != nil {
 		profile.LinkedMasterURL = *linkedMasterURL
+	}
+	if appVersion != nil {
+		profile.AppVersion = *appVersion
 	}
 	return profile, nil
 }

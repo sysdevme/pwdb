@@ -66,6 +66,9 @@
           <span class="pm-mode-dot badge {{ .ServerModeClass }}" title="Server mode {{ .ServerMode }}">{{ .ServerModeCode }}</span>
           {{ end }}
           <span>Un1t PM</span>
+          {{ if .AppVersion }}
+          <span class="badge text-bg-secondary">{{ .AppVersion }}</span>
+          {{ end }}
         </a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain" aria-controls="navMain" aria-expanded="false" aria-label="Toggle navigation">
           <span class="navbar-toggler-icon"></span>

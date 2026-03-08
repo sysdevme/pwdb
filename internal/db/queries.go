@@ -195,19 +195,20 @@ const (
 
 	sqlUpsertServerProfile = `
 		INSERT INTO server_profile (
-			singleton, server_mode, sync_status, linked_master_id, linked_master_url, updated_at
+			singleton, server_mode, sync_status, linked_master_id, linked_master_url, app_version, updated_at
 		)
-		VALUES (TRUE, $1, $2, $3, $4, NOW())
+		VALUES (TRUE, $1, $2, $3, $4, $5, NOW())
 		ON CONFLICT (singleton) DO UPDATE
 		SET server_mode = EXCLUDED.server_mode,
 		    sync_status = EXCLUDED.sync_status,
 		    linked_master_id = EXCLUDED.linked_master_id,
 		    linked_master_url = EXCLUDED.linked_master_url,
+		    app_version = EXCLUDED.app_version,
 		    updated_at = NOW()
 	`
 
 	sqlGetServerProfile = `
-		SELECT server_mode, sync_status, linked_master_id, linked_master_url, created_at, updated_at
+		SELECT server_mode, sync_status, linked_master_id, linked_master_url, app_version, created_at, updated_at
 		FROM server_profile
 		WHERE singleton = TRUE
 	`
