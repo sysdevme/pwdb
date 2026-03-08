@@ -102,6 +102,7 @@ type ServerProfile struct {
 	SyncStatus     string
 	LinkedMasterID string
 	LinkedMasterURL string
+	LastPairingPIN string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -128,6 +129,7 @@ type ControllerUpdateEvent struct {
 type ControllerRegistryEntry struct {
 	ControllerID   string
 	Status         string
+	Weight         int
 	TokenUpdatedAt time.Time
 	LastSeenAt     time.Time
 	CreatedAt      time.Time

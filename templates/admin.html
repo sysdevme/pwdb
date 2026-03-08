@@ -137,12 +137,20 @@
       {{ if and .AdminServerProfile (eq .AdminServerProfile.ServerMode "AS-M") }}
       <hr class="my-4">
       <h6>Controller Registry</h6>
+      <form method="post" action="/admin/controllers/cleanup-stale" class="d-flex align-items-end gap-2 mb-3">
+        <div>
+          <label class="form-label form-label-sm">Disable controllers inactive for (minutes)</label>
+          <input type="number" min="1" step="1" name="age_minutes" value="1440" class="form-control form-control-sm">
+        </div>
+        <button class="btn btn-sm btn-outline-secondary" type="submit">Cleanup Stale Controllers</button>
+      </form>
       {{ if .ControllerRegistry }}
       <div class="table-responsive">
         <table class="table table-striped align-middle">
           <thead>
             <tr>
               <th>Controller ID</th>
+              <th>Weight</th>
               <th>Status</th>
               <th>Last Seen</th>
               <th>Token Updated</th>
@@ -155,6 +163,13 @@
             {{ range .ControllerRegistry }}
             <tr>
               <td><code>{{ .ControllerID }}</code></td>
+              <td>
+                <form method="post" action="/admin/controllers/weight" class="d-flex align-items-center gap-2">
+                  <input type="hidden" name="controller_id" value="{{ .ControllerID }}">
+                  <input type="number" min="0" step="1" name="weight" value="{{ .Weight }}" class="form-control form-control-sm" style="max-width: 90px;">
+                  <button class="btn btn-sm btn-outline-primary" type="submit">Set</button>
+                </form>
+              </td>
               <td>
                 <span class="badge {{ if eq .Status "active" }}text-bg-success{{ else }}text-bg-secondary{{ end }}">{{ if eq .Status "active" }}Approved{{ else }}Non-approved{{ end }}</span>
               </td>

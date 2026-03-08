@@ -1,0 +1,3 @@
+ALTER TABLE controller_registry
+ADD COLUMN IF NOT EXISTS weight INTEGER NOT NULL DEFAULT 0;
+

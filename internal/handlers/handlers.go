@@ -206,6 +206,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/admin/users/list", s.handleAdminUsersListPage)
 	mux.HandleFunc("/admin/users/update", s.handleAdminUpdateUser)
 	mux.HandleFunc("/admin/controllers/status", s.handleAdminSetControllerStatus)
+	mux.HandleFunc("/admin/controllers/weight", s.handleAdminSetControllerWeight)
+	mux.HandleFunc("/admin/controllers/cleanup-stale", s.handleAdminCleanupStaleControllers)
 	mux.HandleFunc("/admin/controller-links/cleanup", s.handleAdminCleanupControllerLinks)
 	mux.HandleFunc("/admin/service/restart", s.handleAdminServiceRestart)
 	mux.HandleFunc("/admin/records/clear-tags", s.handleAdminClearRecordTags)
@@ -560,12 +562,13 @@ func (s *Server) handleControllerListControllers(w http.ResponseWriter, r *http.
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	var controllers []map[string]string
+	var controllers []map[string]any
 	for _, entry := range registry {
-		controllers = append(controllers, map[string]string{
+		controllers = append(controllers, map[string]any{
 			"id":     entry.ControllerID,
 			"name":   entry.ControllerID,
 			"status": entry.Status,
+			"weight": entry.Weight,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -2202,6 +2205,7 @@ type adminControllerLinkView struct {
 type adminControllerRegistryView struct {
 	ControllerID   string
 	Status         string
+	Weight         int
 	TokenUpdatedAt string
 	LastSeenAt     string
 	CreatedAt      string
@@ -2328,6 +2332,7 @@ func (s *Server) adminPageData(ctx context.Context, message string) (map[string]
 					viewRegistry = append(viewRegistry, adminControllerRegistryView{
 						ControllerID:   entry.ControllerID,
 						Status:         entry.Status,
+						Weight:         entry.Weight,
 						TokenUpdatedAt: formatAdminTimestamp(entry.TokenUpdatedAt),
 						LastSeenAt:     formatAdminTimestamp(entry.LastSeenAt),
 						CreatedAt:      formatAdminTimestamp(entry.CreatedAt),
@@ -2576,6 +2581,82 @@ func (s *Server) handleAdminSetControllerStatus(w http.ResponseWriter, r *http.R
 		return
 	}
 	s.renderAdminPage(w, r, "Controller set to non-approved.")
+}
+
+func (s *Server) handleAdminSetControllerWeight(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok || !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	controllerID := strings.TrimSpace(r.FormValue("controller_id"))
+	weightRaw := strings.TrimSpace(r.FormValue("weight"))
+	if controllerID == "" || weightRaw == "" {
+		http.Error(w, "controller_id and weight are required", http.StatusBadRequest)
+		return
+	}
+	weight, err := strconv.Atoi(weightRaw)
+	if err != nil || weight < 0 {
+		http.Error(w, "weight must be an integer >= 0", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.SetControllerRegistryWeight(r.Context(), controllerID, weight); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.renderAdminPage(w, r, "Controller weight updated.")
+}
+
+func (s *Server) handleAdminCleanupStaleControllers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok || !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	ageMinutes := 1440
+	if v := strings.TrimSpace(r.FormValue("age_minutes")); v != "" {
+		parsed, err := strconv.Atoi(v)
+		if err != nil || parsed <= 0 {
+			http.Error(w, "age_minutes must be a positive integer", http.StatusBadRequest)
+			return
+		}
+		ageMinutes = parsed
+	}
+	cutoff := time.Now().Add(-time.Duration(ageMinutes) * time.Minute)
+	updated, err := s.store.CleanupStaleControllerRegistry(r.Context(), cutoff)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if updated == 0 {
+		s.renderAdminPage(w, r, "Stale controller cleanup complete. No controllers matched threshold.")
+		return
+	}
+	s.renderAdminPage(w, r, fmt.Sprintf("Stale controller cleanup complete. Disabled %d controllers.", updated))
 }
 
 func (s *Server) handleAdminCleanupControllerLinks(w http.ResponseWriter, r *http.Request) {

@@ -71,9 +71,11 @@ Current design:
   - Bootstrap registers/updates controller identity
   - Unapproved controller receives pending onboarding response
   - Admin approval is required before operational token is issued
+  - Controllers have configurable `weight` (higher weight = higher priority)
 - Admin telemetry:
   - Master: controller links, health, last handshake, registry approval state
   - Slave: incoming controller events + remote master link status (reachability and link-health summary)
+  - Admin cleanup for stale controllers based on inactivity threshold
 - Periodic master -> slave health checks
 
 Current protocol endpoints:
@@ -81,6 +83,7 @@ Current protocol endpoints:
 - Controller -> Master:
   - `POST /controller/pair`
   - `POST /controller/update/ack`
+  - `GET /controller/controllers` returns controllers ordered by `weight DESC`
 - Controller -> Slave:
   - `POST /controller/snapshot/apply`
   - `POST /controller/update/apply`
@@ -146,6 +149,8 @@ Keep/customize them per environment.
 - Unapproved controllers no longer receive operational token on first bootstrap.
 - Admin Users submenu flow changed to dedicated pages (removed dashboard modal race).
 - Slave admin now shows remote master link status (reachable/offline + active/stale/offline counts).
+- Controller registry now supports per-controller `weight` and ordering by priority.
+- Added `Cleanup Stale Controllers` action in Admin (disables inactive approved controllers by age threshold).
 
 </details>
 

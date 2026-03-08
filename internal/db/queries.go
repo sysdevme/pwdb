@@ -310,9 +310,9 @@ const (
 	`
 
 	sqlListControllerRegistry = `
-		SELECT controller_id, status, token_updated_at, last_seen_at, created_at, updated_at
+		SELECT controller_id, status, weight, token_updated_at, last_seen_at, created_at, updated_at
 		FROM controller_registry
-		ORDER BY created_at ASC
+		ORDER BY weight DESC, created_at ASC
 	`
 
 	sqlSetControllerRegistryStatus = `
@@ -320,6 +320,21 @@ const (
 		SET status = $2,
 		    updated_at = NOW()
 		WHERE controller_id = $1
+	`
+
+	sqlSetControllerRegistryWeight = `
+		UPDATE controller_registry
+		SET weight = $2,
+		    updated_at = NOW()
+		WHERE controller_id = $1
+	`
+
+	sqlCleanupStaleControllerRegistry = `
+		UPDATE controller_registry
+		SET status = 'disabled',
+		    updated_at = NOW()
+		WHERE status = 'active'
+		  AND COALESCE(last_seen_at, token_updated_at, created_at) < $1
 	`
 
 	sqlCreateUser = `

@@ -808,7 +808,7 @@ func (s *Store) ListControllerRegistry(ctx context.Context) ([]models.Controller
 		var item models.ControllerRegistryEntry
 		var tokenUpdatedAt *time.Time
 		var lastSeenAt *time.Time
-		if err := rows.Scan(&item.ControllerID, &item.Status, &tokenUpdatedAt, &lastSeenAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ControllerID, &item.Status, &item.Weight, &tokenUpdatedAt, &lastSeenAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if tokenUpdatedAt != nil {
@@ -839,6 +839,32 @@ func (s *Store) SetControllerRegistryStatus(ctx context.Context, controllerID st
 		return errors.New("controller is not found")
 	}
 	return nil
+}
+
+func (s *Store) SetControllerRegistryWeight(ctx context.Context, controllerID string, weight int) error {
+	controllerID = strings.TrimSpace(controllerID)
+	if controllerID == "" {
+		return errors.New("controller_id is required")
+	}
+	if weight < 0 {
+		return errors.New("weight must be >= 0")
+	}
+	tag, err := s.pool.Exec(ctx, sqlSetControllerRegistryWeight, controllerID, weight)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("controller is not found")
+	}
+	return nil
+}
+
+func (s *Store) CleanupStaleControllerRegistry(ctx context.Context, staleBefore time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx, sqlCleanupStaleControllerRegistry, staleBefore)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (s *Store) CreateUser(ctx context.Context, user models.User) error {
