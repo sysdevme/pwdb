@@ -155,6 +155,7 @@ Keep/customize them per environment.
 - Slave admin now shows remote master link status (reachable/offline + active/stale/offline counts).
 - Controller registry now supports per-controller `weight` and ordering by priority.
 - Added `Cleanup Stale Controllers` action in Admin (disables inactive approved controllers by age threshold).
+- Restored `Unlock` action in account dropdown while already unlocked, so users can extend unlock time without waiting for expiry.
 
 </details>
 

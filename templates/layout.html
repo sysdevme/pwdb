@@ -123,6 +123,7 @@
                 </li>
                 <li><hr class="dropdown-divider"></li>
                 {{ if .Unlocked }}
+                <li><button type="button" class="dropdown-item" id="unlockButton">Unlock</button></li>
                 <li>
                   <form method="post" action="/lock">
                     <button type="submit" class="dropdown-item">Lock</button>
