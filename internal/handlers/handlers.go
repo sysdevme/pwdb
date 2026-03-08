@@ -189,6 +189,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/passwords/new", s.handlePasswordForm)
 	mux.HandleFunc("/passwords/edit", s.handlePasswordEdit)
 	mux.HandleFunc("/passwords/update-password", s.handlePasswordUpdatePassword)
+	mux.HandleFunc("/passwords/update-title", s.handlePasswordUpdateTitle)
+	mux.HandleFunc("/passwords/update-collections", s.handlePasswordUpdateCollections)
 	mux.HandleFunc("/passwords/delete", s.handlePasswordDelete)
 	mux.HandleFunc("/passwords/view", s.handlePasswordView)
 	mux.HandleFunc("/passwords/share", s.handlePasswordShare)
@@ -959,18 +961,18 @@ func (s *Server) handlePasswords(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		viewItems = append(viewItems, map[string]string{
-			"ID":          item.ID,
-			"Title":       item.Title,
-			"Username":    item.Username,
-			"URL":         item.URL,
-			"Tags":        strings.Join(item.Tags, ", "),
-			"Groups":      strings.Join(item.Groups, ", "),
-			"SharedLabel": sharedLabel,
-			"SharedBy":    sharedBy,
+			"ID":           item.ID,
+			"Title":        item.Title,
+			"Username":     item.Username,
+			"URL":          item.URL,
+			"Tags":         strings.Join(item.Tags, ", "),
+			"Groups":       strings.Join(item.Groups, ", "),
+			"SharedLabel":  sharedLabel,
+			"SharedBy":     sharedBy,
 			"SharedByName": sharedByName,
-			"SharedAt":    sharedAt,
-			"SharedAtISO": sharedAtISO,
-			"CanManage":   fmt.Sprintf("%t", item.UserID == user.ID),
+			"SharedAt":     sharedAt,
+			"SharedAtISO":  sharedAtISO,
+			"CanManage":    fmt.Sprintf("%t", item.UserID == user.ID),
 		})
 	}
 	viewItems = filterPasswordRows(viewItems, searchField, searchText)
@@ -1185,6 +1187,78 @@ func (s *Server) handlePasswordUpdatePassword(w http.ResponseWriter, r *http.Req
 		return
 	}
 	http.Redirect(w, r, "/passwords/view?id="+id, http.StatusSeeOther)
+}
+
+func (s *Server) handlePasswordUpdateTitle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "locked", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	id := strings.TrimSpace(r.FormValue("id"))
+	title := strings.TrimSpace(r.FormValue("title"))
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.UpdatePasswordTitle(r.Context(), id, user.ID, title); err != nil {
+		http.Redirect(w, r, "/passwords/view?id="+url.QueryEscape(id)+"&msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/passwords/view?id="+url.QueryEscape(id)+"&msg="+url.QueryEscape("Item name updated."), http.StatusSeeOther)
+}
+
+func (s *Server) handlePasswordUpdateCollections(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "locked", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	id := strings.TrimSpace(r.FormValue("id"))
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	entry, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
+	if err != nil || entry.UserID != user.ID {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err := s.store.UpdatePasswordCollections(
+		r.Context(),
+		id,
+		user.ID,
+		splitComma(r.FormValue("tags")),
+		splitComma(r.FormValue("groups")),
+	); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/passwords/view?id="+url.QueryEscape(id), http.StatusSeeOther)
 }
 
 func (s *Server) handlePasswordDelete(w http.ResponseWriter, r *http.Request) {
@@ -1571,12 +1645,13 @@ func (s *Server) handlePasswordView(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "missing id", http.StatusBadRequest)
 			return
 		}
+		message := strings.TrimSpace(r.URL.Query().Get("msg"))
 		entry, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
 		if err != nil {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		s.renderPasswordView(w, r, user, entry, s.isUnlocked(r), "", "")
+		s.renderPasswordView(w, r, user, entry, s.isUnlocked(r), message, "")
 	case http.MethodPost:
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form", http.StatusBadRequest)
@@ -1629,6 +1704,20 @@ func (s *Server) renderPasswordView(w http.ResponseWriter, r *http.Request, user
 		data["ShareLink"] = shareLink
 	}
 	if canManage {
+		if tags, err := s.store.ListTags(r.Context(), user.ID); err == nil {
+			var tagNames []string
+			for _, tag := range tags {
+				tagNames = append(tagNames, tag.Name)
+			}
+			data["TagsList"] = tagNames
+		}
+		if groups, err := s.store.ListGroups(r.Context(), user.ID); err == nil {
+			var groupNames []string
+			for _, group := range groups {
+				groupNames = append(groupNames, group.Name)
+			}
+			data["GroupsList"] = groupNames
+		}
 		if shareTargets, err := s.store.ListActiveUsersExcept(r.Context(), user.ID); err == nil {
 			data["ShareTargets"] = shareTargets
 		}

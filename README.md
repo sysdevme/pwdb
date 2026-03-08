@@ -47,10 +47,12 @@ Login:
 - Password and secure note CRUD
 - Tags and groups with detail pages
 - Tags and groups collection pages rendered as cards with `Edit` and `Remove` actions
+- Dashboard shows `Tags` and `Groups` as two cards in one row
 - Search filters and pagination on list pages
 - Sharing items with other active users (shared items are recipient read-only)
 - Internal user-to-user short messages (`Messages` page, max 300 chars)
 - Shared password recipient action is `Unshare` (removes own access only; does not delete owner record)
+- Password view supports inline owner updates for item name, tags, and groups (including selecting from existing tags/groups)
 - Pending -> active user lifecycle on first successful login
 - Timed unlock session with manual lock
 - Account page for user credential updates

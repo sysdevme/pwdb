@@ -300,6 +300,78 @@ func (s *Store) UpdatePassword(ctx context.Context, cryptoSvc *crypto.Service, e
 	return tx.Commit(ctx)
 }
 
+func (s *Store) UpdatePasswordTitle(ctx context.Context, entryID, ownerUserID, title string) error {
+	uid, err := uuid.Parse(entryID)
+	if err != nil {
+		return err
+	}
+	userID, err := uuid.Parse(ownerUserID)
+	if err != nil {
+		return err
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return errors.New("title is required")
+	}
+	tag, err := s.pool.Exec(ctx, sqlUpdatePasswordTitle, uid, title, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("password not found")
+	}
+	return nil
+}
+
+func (s *Store) UpdatePasswordCollections(ctx context.Context, entryID, ownerUserID string, tags, groups []string) error {
+	uid, err := uuid.Parse(entryID)
+	if err != nil {
+		return err
+	}
+	userID, err := uuid.Parse(ownerUserID)
+	if err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM password_entries WHERE id = $1 AND user_id = $2)`, uid, userID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("password not found")
+	}
+	if _, err := tx.Exec(ctx, sqlDeleteEntryTagsByEntryID, uid); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, sqlDeleteGroupEntriesByEntryID, uid); err != nil {
+		return err
+	}
+	for _, tagName := range normalizeTags(tags) {
+		tagID, err := ensureTag(ctx, tx, userID, tagName)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, sqlInsertEntryTag, uid, tagID); err != nil {
+			return err
+		}
+	}
+	for _, groupName := range normalizeTags(groups) {
+		groupID, err := ensureGroup(ctx, tx, userID, groupName)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, sqlInsertGroupEntry, groupID, uid); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) DeletePassword(ctx context.Context, userID, id string) error {
 	uid, err := uuid.Parse(id)
 	if err != nil {

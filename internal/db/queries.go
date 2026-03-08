@@ -92,6 +92,12 @@ const (
 		WHERE id = $1 AND user_id = $7
 	`
 
+	sqlUpdatePasswordTitle = `
+		UPDATE password_entries
+		SET title = $2, updated_at = NOW()
+		WHERE id = $1 AND user_id = $3
+	`
+
 	sqlDeleteEntryTagsByEntryID = `
 		DELETE FROM entry_tags WHERE entry_id = $1
 	`
