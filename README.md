@@ -43,6 +43,57 @@ Login:
 
 - `http://localhost:8080/login`
 
+## Secured example (WireGuard + UFW)
+
+Goal:
+
+- Keep only SSH and WireGuard reachable from the public internet
+- Keep PWDB web UI (`8080/tcp`) reachable only over VPN (`wg0`)
+
+Example commands (Ubuntu/Debian with UFW):
+
+```bash
+# Allow admin access and VPN
+sudo ufw allow 22/tcp comment 'SSH'
+sudo ufw allow 51820/udp comment 'WireGuard'
+
+# Allow app port only on WireGuard interface
+sudo ufw allow in on wg0 to any port 8080 proto tcp
+
+# Block app port on all other interfaces
+sudo ufw deny in to any port 8080 proto tcp
+
+# Default policy
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+
+# Enable/reload firewall
+sudo ufw enable
+sudo ufw reload
+sudo ufw status numbered
+```
+
+Expected behavior:
+
+- `http://<public-ip>:8080/login` -> blocked
+- `http://10.8.0.1:8080/login` (over WireGuard VPN) -> allowed
+
+WireGuard note:
+
+- If `wg0.conf` has `SaveConfig = true`, a service restart can overwrite manual peer edits.
+- To keep manual peer config stable, set `SaveConfig = false`.
+
+SSH hardening note:
+
+- Do not disable password authentication until you confirm public key login works in a second SSH session.
+- After confirming key login, disable password SSH auth in `/etc/ssh/sshd_config`:
+  - `PubkeyAuthentication yes`
+  - `PasswordAuthentication no`
+  - `ChallengeResponseAuthentication no`
+  - (recommended) `PermitRootLogin no`
+- Then reload SSH daemon (`sudo systemctl reload ssh` or `sudo systemctl reload sshd` depending on distro).
+- If key login is not configured and password auth is disabled, remote SSH access will be blocked.
+
 ## Core features (stable app surface)
 
 - Password and secure note CRUD
