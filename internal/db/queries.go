@@ -603,4 +603,26 @@ const (
 	sqlClearAllGroups = `
 		DELETE FROM groups
 	`
+
+	sqlRenameTagByID = `
+		UPDATE tags
+		SET name = $3
+		WHERE user_id = $1 AND id = $2
+	`
+
+	sqlDeleteTagByID = `
+		DELETE FROM tags
+		WHERE user_id = $1 AND id = $2
+	`
+
+	sqlRenameGroupByID = `
+		UPDATE groups
+		SET name = $3
+		WHERE user_id = $1 AND id = $2
+	`
+
+	sqlDeleteGroupByID = `
+		DELETE FROM groups
+		WHERE user_id = $1 AND id = $2
+	`
 )

@@ -1457,6 +1457,90 @@ func (s *Store) ClearAllGroups(ctx context.Context) (int64, error) {
 	return tag.RowsAffected(), nil
 }
 
+func (s *Store) RenameTagByID(ctx context.Context, userID, tagID, newName string) error {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	tid, err := uuid.Parse(strings.TrimSpace(tagID))
+	if err != nil {
+		return err
+	}
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return errors.New("new tag name is required")
+	}
+	tag, err := s.pool.Exec(ctx, sqlRenameTagByID, uid, tid, newName)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("tag not found")
+	}
+	return nil
+}
+
+func (s *Store) DeleteTagByID(ctx context.Context, userID, tagID string) error {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	tid, err := uuid.Parse(strings.TrimSpace(tagID))
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, sqlDeleteTagByID, uid, tid)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("tag not found")
+	}
+	return nil
+}
+
+func (s *Store) RenameGroupByID(ctx context.Context, userID, groupID, newName string) error {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	gid, err := uuid.Parse(strings.TrimSpace(groupID))
+	if err != nil {
+		return err
+	}
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return errors.New("new group name is required")
+	}
+	tag, err := s.pool.Exec(ctx, sqlRenameGroupByID, uid, gid, newName)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("group not found")
+	}
+	return nil
+}
+
+func (s *Store) DeleteGroupByID(ctx context.Context, userID, groupID string) error {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	gid, err := uuid.Parse(strings.TrimSpace(groupID))
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, sqlDeleteGroupByID, uid, gid)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("group not found")
+	}
+	return nil
+}
+
 func parseOrNewUUID(value string) (uuid.UUID, error) {
 	if value == "" {
 		return uuid.New(), nil

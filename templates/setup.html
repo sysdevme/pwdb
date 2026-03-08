@@ -5,21 +5,21 @@
     <label class="form-label d-block">Server Mode</label>
     <div class="form-check">
       <input class="form-check-input" type="radio" name="server_mode" id="modeMaster" value="AS-M" {{ if or (not .ServerMode) (eq .ServerMode "AS-M") }}checked{{ end }}>
-      <label class="form-check-label" for="modeMaster">AS-M (Master)</label>
+      <label class="form-check-label" for="modeMaster">AS-M (un1t master)</label>
     </div>
     <div class="form-check">
       <input class="form-check-input" type="radio" name="server_mode" id="modeSlave" value="AS-S" {{ if eq .ServerMode "AS-S" }}checked{{ end }}>
-      <label class="form-check-label" for="modeSlave">AS-S (Slave)</label>
+      <label class="form-check-label" for="modeSlave">AS-S (un1t slave)</label>
     </div>
-    <div class="form-text">Master is authoritative. Slave receives snapshot and waits for updates.</div>
+    <div class="form-text">un1t master is authoritative. un1t slave receives snapshot and waits for updates.</div>
   </div>
   <div id="slaveFields" class="mb-3 d-none">
-    <label class="form-label">Linked Master URL</label>
+    <label class="form-label">Linked un1t master URL</label>
     <input type="url" name="linked_master_url" class="form-control" placeholder="https://master.example.com">
     <div class="form-text">Required in AS-S mode.</div>
   </div>
   <div id="slaveFieldsID" class="mb-3 d-none">
-    <label class="form-label">Linked Master ID (optional)</label>
+    <label class="form-label">Linked un1t master ID (optional)</label>
     <input type="text" name="linked_master_id" class="form-control" placeholder="master-server-id">
   </div>
   <div class="mb-3">

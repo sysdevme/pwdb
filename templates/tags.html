@@ -21,28 +21,24 @@
   <div class="alert alert-light border text-muted mb-0">Locked. Unlock to view tags.</div>
 {{ else }}
 {{ if .Items }}
-  <div class="table-responsive" data-hide-on-expire>
-    <table class="table table-bordered table-hover align-middle mb-0">
-      <thead class="table-light">
-        <tr>
-          <th>Tag</th>
-          <th>Items</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{ range .Items }}
-          <tr>
-            <td>
-              <div class="fw-bold">{{ .Name }}</div>
-              <div class="small text-muted">View all related passwords and notes</div>
-            </td>
-            <td><span class="badge rounded-pill text-bg-primary">{{ .Count }}</span></td>
-            <td><a href="{{ .URL }}" class="btn btn-sm btn-outline-secondary">Open</a></td>
-          </tr>
-        {{ end }}
-      </tbody>
-    </table>
+  <div class="row g-3" data-hide-on-expire>
+    {{ range .Items }}
+      <div class="col-12 col-md-6 col-lg-4">
+        <div class="card h-100">
+          <div class="card-body">
+            <h5 class="card-title mb-1">{{ .Name }}</h5>
+            <div class="small text-muted mb-3">Items: {{ .Count }}</div>
+            <div class="d-flex gap-2">
+              <button type="button" class="btn btn-sm btn-outline-secondary" data-id="{{ .ID }}" data-name="{{ .Name }}" onclick="openTagEdit(this)">Edit</button>
+              <form method="post" action="/tags/remove" onsubmit="return confirm('Remove tag from all records?');">
+                <input type="hidden" name="id" value="{{ .ID }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit">Remove</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+    {{ end }}
   </div>
   {{ with .Pager }}
     <div class="d-flex justify-content-between align-items-center mt-3" data-hide-on-expire>
@@ -67,4 +63,30 @@
   <div class="alert alert-light border text-muted mb-0">No tags yet.</div>
 {{ end }}
 {{ end }}
+<form id="tagEditForm" method="post" action="/tags/edit" class="d-none">
+  <input type="hidden" name="id" id="tagEditID">
+  <input type="hidden" name="new_name" id="tagEditNewName">
+</form>
+<script>
+  function openTagEdit(button) {
+    if (!button) return;
+    const id = (button.getAttribute("data-id") || "").trim();
+    const oldName = button.getAttribute("data-name") || "";
+    if (!id) return;
+    const next = prompt("Edit tag name:", oldName);
+    if (next === null) return;
+    const newName = next.trim();
+    if (!newName) {
+      alert("Tag name cannot be empty.");
+      return;
+    }
+    const idEl = document.getElementById("tagEditID");
+    const newEl = document.getElementById("tagEditNewName");
+    const form = document.getElementById("tagEditForm");
+    if (!idEl || !newEl || !form) return;
+    idEl.value = id;
+    newEl.value = newName;
+    form.submit();
+  }
+</script>
 {{ end }}

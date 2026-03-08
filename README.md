@@ -5,7 +5,7 @@ Default development branch: `v4`.
 This repository now combines:
 
 - Core application features from `v3`
-- Master/slave + controller work from `v4`
+- un1t master/un1t slave + un1t controller work from `v4`
 
 ## Security notice
 
@@ -45,6 +45,7 @@ Login:
 
 - Password and secure note CRUD
 - Tags and groups with detail pages
+- Tags and groups collection pages rendered as cards with `Edit` and `Remove` actions
 - Search filters and pagination on list pages
 - Sharing items with other active users (shared items are recipient read-only)
 - Pending -> active user lifecycle on first successful login
@@ -65,7 +66,7 @@ Login:
   - Includes node role switch (`AS-M` <-> `AS-S`)
   - `AS-M` -> `AS-S` validates linked master availability and shows popup with failure reason when blocked
 
-## Experimental: master/slave + controller (under development)
+## Experimental: un1t master/un1t slave + un1t controller (under development)
 
 The distributed topology is experimental.
 Expect protocol/schema changes while development continues.
@@ -73,13 +74,13 @@ Expect protocol/schema changes while development continues.
 Current design:
 
 - Setup mode:
-  - `AS-M` (master)
-  - `AS-S` (slave)
-- Controller onboarding:
+  - `AS-M` (un1t master)
+  - `AS-S` (un1t slave)
+- un1t controller onboarding:
   - Bootstrap registers/updates controller identity
   - Unapproved controller receives pending onboarding response
   - Admin approval is required before operational token is issued
-  - Controllers have configurable `weight` (higher weight = higher priority)
+  - un1t controllers have configurable `weight` (higher weight = higher priority)
 - Admin telemetry:
   - Master: controller links, health, last handshake, registry approval state
   - Slave: incoming controller events + remote master link status (reachability and link-health summary)

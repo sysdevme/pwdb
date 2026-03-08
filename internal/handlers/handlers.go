@@ -184,8 +184,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/notes/view", s.handleNoteView)
 	mux.HandleFunc("/notes/share", s.handleNoteShare)
 	mux.HandleFunc("/groups", s.handleGroups)
+	mux.HandleFunc("/groups/edit", s.handleGroupEdit)
+	mux.HandleFunc("/groups/remove", s.handleGroupRemove)
 	mux.HandleFunc("/groups/view", s.handleGroupDetail)
 	mux.HandleFunc("/tags", s.handleTags)
+	mux.HandleFunc("/tags/edit", s.handleTagEdit)
+	mux.HandleFunc("/tags/remove", s.handleTagRemove)
 	mux.HandleFunc("/tags/view", s.handleTagDetail)
 	mux.HandleFunc("/settings", s.handleSettings)
 	mux.HandleFunc("/share/password", s.handleSharedPassword)
@@ -2147,6 +2151,7 @@ func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
 	var viewItems []map[string]any
 	for _, g := range items {
 		viewItems = append(viewItems, map[string]any{
+			"ID":    g.ID,
 			"Name":  g.Name,
 			"Count": g.Count,
 			"URL":   "/groups/view?name=" + urlQueryEscape(g.Name),
@@ -2200,6 +2205,7 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 	var viewItems []map[string]any
 	for _, t := range items {
 		viewItems = append(viewItems, map[string]any{
+			"ID":    t.ID,
 			"Name":  t.Name,
 			"Count": t.Count,
 			"URL":   "/tags/view?name=" + urlQueryEscape(t.Name),
@@ -2225,6 +2231,128 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 			"Q":     searchText,
 		},
 	})
+}
+
+func (s *Server) handleTagEdit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	tagID := strings.TrimSpace(r.FormValue("id"))
+	newName := strings.TrimSpace(r.FormValue("new_name"))
+	if tagID == "" || newName == "" {
+		http.Error(w, "id and new name are required", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.RenameTagByID(r.Context(), user.ID, tagID, newName); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/tags", http.StatusSeeOther)
+}
+
+func (s *Server) handleTagRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	tagID := strings.TrimSpace(r.FormValue("id"))
+	if tagID == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.DeleteTagByID(r.Context(), user.ID, tagID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/tags", http.StatusSeeOther)
+}
+
+func (s *Server) handleGroupEdit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	groupID := strings.TrimSpace(r.FormValue("id"))
+	newName := strings.TrimSpace(r.FormValue("new_name"))
+	if groupID == "" || newName == "" {
+		http.Error(w, "id and new name are required", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.RenameGroupByID(r.Context(), user.ID, groupID, newName); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/groups", http.StatusSeeOther)
+}
+
+func (s *Server) handleGroupRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	groupID := strings.TrimSpace(r.FormValue("id"))
+	if groupID == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.DeleteGroupByID(r.Context(), user.ID, groupID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/groups", http.StatusSeeOther)
 }
 
 func (s *Server) handleGroupDetail(w http.ResponseWriter, r *http.Request) {
