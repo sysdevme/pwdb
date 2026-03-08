@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sort"
 	"sync"
 	"time"
 
@@ -2195,7 +2196,27 @@ func (s *Server) adminPageData(ctx context.Context, message string) (map[string]
 		}
 		if profile.ServerMode == "AS-S" {
 			if events, err := s.store.ListControllerUpdateEvents(ctx, 50); err == nil {
-				data["ControllerUpdateEvents"] = events
+				latestByVersion := make(map[int64]models.ControllerUpdateEvent)
+				for _, e := range events {
+					cur, ok := latestByVersion[e.VaultVersion]
+					if !ok || e.CreatedAt.After(cur.CreatedAt) {
+						latestByVersion[e.VaultVersion] = e
+					}
+				}
+				filtered := make([]models.ControllerUpdateEvent, 0, len(latestByVersion))
+				for _, e := range latestByVersion {
+					filtered = append(filtered, e)
+				}
+				sort.Slice(filtered, func(i, j int) bool {
+					if filtered[i].VaultVersion == filtered[j].VaultVersion {
+						return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+					}
+					return filtered[i].VaultVersion > filtered[j].VaultVersion
+				})
+				data["ControllerUpdateEvents"] = filtered
+				data["ControllerUpdateEventsRaw"] = events
+				data["ControllerUpdateEventsRawCount"] = len(events)
+				data["ControllerUpdateEventsLatestCount"] = len(filtered)
 			}
 		}
 	}

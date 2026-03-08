@@ -152,7 +152,14 @@
       {{ end }}
       {{ if and .AdminServerProfile (eq .AdminServerProfile.ServerMode "AS-S") }}
       <hr class="my-4">
-      <h6>Incoming Controller Events</h6>
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <h6 class="mb-0">Incoming Controller Events (Latest Per Vault Version)</h6>
+        {{ if .ControllerUpdateEventsRaw }}
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#rawControllerEvents" aria-expanded="false" aria-controls="rawControllerEvents">
+          Show/Hide Raw Events
+        </button>
+        {{ end }}
+      </div>
       {{ if .ControllerUpdateEvents }}
       <div class="table-responsive">
         <table class="table table-striped align-middle">
@@ -182,6 +189,39 @@
       </div>
       {{ else }}
       <div class="alert alert-secondary mb-0">No incoming controller events yet.</div>
+      {{ end }}
+      {{ if .ControllerUpdateEventsRaw }}
+      <div class="collapse mt-3" id="rawControllerEvents">
+        <div class="card card-body">
+          <div class="small text-muted mb-2">Raw recent events (up to {{ .ControllerUpdateEventsRawCount }} rows).</div>
+          <div class="table-responsive">
+            <table class="table table-sm table-striped align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>Event ID</th>
+                  <th>Master ID</th>
+                  <th>Vault Version</th>
+                  <th>Status</th>
+                  <th>Received</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{ range .ControllerUpdateEventsRaw }}
+                <tr>
+                  <td><code>{{ .EventID }}</code></td>
+                  <td><code>{{ .MasterServerID }}</code></td>
+                  <td>{{ .VaultVersion }}</td>
+                  <td>
+                    <span class="badge {{ if eq .Status "applied" }}text-bg-success{{ else if eq .Status "acked" }}text-bg-primary{{ else }}text-bg-danger{{ end }}">{{ .Status }}</span>
+                  </td>
+                  <td>{{ .CreatedAt.Format "2006-01-02 15:04:05" }}</td>
+                </tr>
+                {{ end }}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
       {{ end }}
       {{ end }}
     </div>
