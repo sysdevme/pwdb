@@ -3,12 +3,16 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 )
 
 type MasterConfig struct {
 	BaseURL         string `json:"base_url"`
+	Port            int    `json:"port"`
 	BootstrapPath   string `json:"bootstrap_path"`
 	RotatePath      string `json:"rotate_path"`
 	ControllersPath string `json:"controllers_path"`
@@ -18,6 +22,10 @@ type MasterConfig struct {
 	SharedToken     string `json:"shared_token"`
 }
 
+type SlaveConfig struct {
+	DefaultPort int `json:"default_port"`
+}
+
 type Config struct {
 	ControllerID       string       `json:"controller_id"`
 	ListenAddr         string       `json:"listen_addr"`
@@ -25,6 +33,7 @@ type Config struct {
 	HTTPTimeoutSeconds int          `json:"http_timeout_seconds"`
 	SyncIntervalSec    int          `json:"sync_interval_sec"`
 	Master             MasterConfig `json:"master"`
+	Slave              SlaveConfig  `json:"slave"`
 }
 
 func Load(path string) (Config, error) {
@@ -65,6 +74,16 @@ func (c *Config) Normalize() error {
 	if c.Master.BaseURL == "" {
 		return fmt.Errorf("master.base_url is required")
 	}
+	if c.Master.Port < 0 || c.Master.Port > 65535 {
+		return fmt.Errorf("master.port must be between 1 and 65535")
+	}
+	if c.Master.Port > 0 {
+		baseURLWithPort, err := applyURLPort(c.Master.BaseURL, c.Master.Port)
+		if err != nil {
+			return fmt.Errorf("invalid master.base_url: %w", err)
+		}
+		c.Master.BaseURL = baseURLWithPort
+	}
 	if strings.TrimSpace(c.Master.BootstrapPath) == "" {
 		c.Master.BootstrapPath = "/controller/auth/bootstrap"
 	}
@@ -84,5 +103,24 @@ func (c *Config) Normalize() error {
 		c.Master.UpdateApplyPath = "/controller/update/apply"
 	}
 	c.Master.SharedToken = strings.TrimSpace(c.Master.SharedToken)
+	if c.Slave.DefaultPort < 0 || c.Slave.DefaultPort > 65535 {
+		return fmt.Errorf("slave.default_port must be between 1 and 65535")
+	}
 	return nil
+}
+
+func applyURLPort(baseURL string, port int) (string, error) {
+	raw := strings.TrimSpace(baseURL)
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(u.Hostname()) == "" {
+		return "", fmt.Errorf("host is required")
+	}
+	u.Host = net.JoinHostPort(u.Hostname(), strconv.Itoa(port))
+	return strings.TrimRight(u.String(), "/"), nil
 }

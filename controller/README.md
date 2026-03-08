@@ -26,6 +26,8 @@ Important fields:
 - `controller_id`: unique controller identifier
 - `sync_interval_sec`: worker sync interval in seconds (default `30`)
 - `master.base_url`: master PWDB URL
+- `master.port`: optional override for master access port (if set, replaces port from `master.base_url`)
+- `slave.default_port`: optional default port used when `slave_url` is registered without explicit port
 - `master.bootstrap_path`: endpoint for key authentication
 - `master.rotate_path`: endpoint for token rotation
 - `master.controllers_path`: endpoint that returns available controllers + next token
@@ -79,10 +81,12 @@ Body:
 ```json
 {
   "slave_id": "slave-1",
-  "slave_url": "http://10.1.12.45:8080",
+  "slave_url": "http://10.1.12.45",
   "controller_id": "controller-01"
 }
 ```
+
+If `slave.default_port` is set to `8080`, the example above is normalized to `http://10.1.12.45:8080`.
 
 If `controller_id` is omitted, controller auto-selects the highest-weight active controller from master registry.
 

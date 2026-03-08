@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -213,6 +215,12 @@ func (s *Server) handleRegisterSlave(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "slave_id and slave_url are required", http.StatusBadRequest)
 		return
 	}
+	normalizedSlaveURL, err := normalizeSlaveURL(in.SlaveURL, s.cfg.Slave.DefaultPort)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	in.SlaveURL = normalizedSlaveURL
 
 	token, err := s.currentToken()
 	if err != nil {
@@ -534,4 +542,25 @@ func pickHighestWeightActiveController(controllers []master.ControllerInfo) (mas
 		}
 	}
 	return best, found
+}
+
+func normalizeSlaveURL(raw string, defaultPort int) (string, error) {
+	val := strings.TrimSpace(raw)
+	if val == "" {
+		return "", fmt.Errorf("slave_url is required")
+	}
+	if !strings.Contains(val, "://") {
+		val = "http://" + val
+	}
+	u, err := url.Parse(val)
+	if err != nil {
+		return "", fmt.Errorf("invalid slave_url: %w", err)
+	}
+	if strings.TrimSpace(u.Hostname()) == "" {
+		return "", fmt.Errorf("invalid slave_url: host is required")
+	}
+	if defaultPort > 0 && strings.TrimSpace(u.Port()) == "" {
+		u.Host = net.JoinHostPort(u.Hostname(), strconv.Itoa(defaultPort))
+	}
+	return strings.TrimRight(u.String(), "/"), nil
 }
