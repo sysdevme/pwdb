@@ -23,6 +23,7 @@ It is not production-ready and should not be exposed directly to the public inte
 - Sharing between active users
 - Server-side crypto with Argon2id + AES-GCM
 - Optional distributed topology (`AS-M`/`AS-S`) via controller APIs (experimental)
+- Embedded controller service source at `controller/`
 
 ## Quick start
 
@@ -101,7 +102,7 @@ Current protocol endpoints:
 - Controller -> Master (status query):
   - `GET /controller/links/status`
 
-Controller companion status (`pwdb-controller`, separate repo/worktree):
+Embedded controller status (`controller/`):
 
 - Background worker loop with retry backoff
 - Pair relay + automatic slave update apply + master ACK relay
@@ -109,6 +110,27 @@ Controller companion status (`pwdb-controller`, separate repo/worktree):
 - Manual controller endpoints:
   - `POST /v1/slaves/sync`
   - `POST /v1/slaves/unregister`
+
+Controller run (from this repository):
+
+```powershell
+cd E:\pwdb-main\controller
+go run ./cmd/controller -config configs/controller.dev.json
+```
+
+Bootstrap controller against master:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:9091/v1/master/bootstrap" `
+  -ContentType "application/json" `
+  -Body (@{ master_key = "<CONTROLLER_MASTER_KEY>" } | ConvertTo-Json -Compress)
+```
+
+Then list visible controllers (token rotates each call):
+
+```powershell
+curl.exe -sS http://127.0.0.1:9091/v1/master/controllers
+```
 
 ## Environment
 
