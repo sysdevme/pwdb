@@ -62,11 +62,10 @@
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
       <div class="container pm-site-frame">
         <a class="navbar-brand d-flex align-items-center gap-2" href="/">
-          <span>Password Manager</span>
           {{ if .ServerMode }}
           <span class="pm-mode-dot badge {{ .ServerModeClass }}" title="Server mode {{ .ServerMode }}">{{ .ServerModeCode }}</span>
-          <span class="badge text-bg-secondary">{{ .ServerMode }}</span>
           {{ end }}
+          <span>Password Manager</span>
         </a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain" aria-controls="navMain" aria-expanded="false" aria-label="Toggle navigation">
           <span class="navbar-toggler-icon"></span>
@@ -75,9 +74,18 @@
           <ul class="navbar-nav me-auto mb-2 mb-lg-0">
             <li class="nav-item"><a class="nav-link" href="/passwords">Passwords</a></li>
             <li class="nav-item"><a class="nav-link" href="/notes">Secure Notes</a></li>
-            <li class="nav-item"><a class="nav-link" href="/import/1password">Import</a></li>
-            <li class="nav-item"><a class="nav-link" href="/account">Account</a></li>
-            <li class="nav-item"><a class="nav-link" href="/settings">Settings</a></li>
+            <li class="nav-item">
+              <div class="btn-group" role="group" aria-label="Account menu">
+                <a class="btn btn-link nav-link text-decoration-none" href="/account">Account</a>
+                <button type="button" class="btn btn-link nav-link dropdown-toggle dropdown-toggle-split text-decoration-none" data-bs-toggle="dropdown" aria-expanded="false">
+                  <span class="visually-hidden">Toggle Account menu</span>
+                </button>
+                <ul class="dropdown-menu">
+                  <li><a class="dropdown-item" href="/settings">Settings</a></li>
+                  <li><a class="dropdown-item" href="/account">Profile</a></li>
+                </ul>
+              </div>
+            </li>
             {{ if .IsAdmin }}
             <li class="nav-item">
               <div class="btn-group" role="group" aria-label="Admin menu">
@@ -91,6 +99,8 @@
                   <li><h6 class="dropdown-header">Users</h6></li>
                   <li><a class="dropdown-item" href="/admin/users/create">Create</a></li>
                   <li><a class="dropdown-item" href="/admin/users/list">List</a></li>
+                  <li><hr class="dropdown-divider"></li>
+                  <li><a class="dropdown-item" href="/import/1password">Import</a></li>
                 </ul>
               </div>
             </li>
@@ -98,32 +108,36 @@
           </ul>
           <div class="d-flex align-items-center gap-2">
             {{ if .CurrentUserEmail }}
-              {{ if .Unlocked }}
-                <span class="badge text-bg-success">Unlocked <span id="unlockTimer" data-seconds="{{ .UnlockSeconds }}">({{ .UnlockSeconds }}s)</span></span>
-                <form method="post" action="/lock" class="d-inline">
-                  <button type="submit" class="btn btn-sm btn-outline-light">Lock</button>
-                </form>
-              {{ else }}
-                <span class="badge text-bg-secondary">Locked</span>
-              {{ end }}
-              <div class="dropdown">
-                <button class="btn btn-sm btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                  Size <span id="siteScaleLabel">100%</span>
-                </button>
-                <ul class="dropdown-menu dropdown-menu-end">
-                  <li><button class="dropdown-item" type="button" data-site-scale-opt="1">100% (Full)</button></li>
-                  <li><button class="dropdown-item" type="button" data-site-scale-opt="0.9">90%</button></li>
-                  <li><button class="dropdown-item" type="button" data-site-scale-opt="0.8">80%</button></li>
-                  <li><button class="dropdown-item" type="button" data-site-scale-opt="0.7">70%</button></li>
-                  <li><button class="dropdown-item" type="button" data-site-scale-opt="0.6">60%</button></li>
-                  <li><button class="dropdown-item" type="button" data-site-scale-opt="0.5">50%</button></li>
-                </ul>
-              </div>
-              <button type="button" class="btn btn-sm btn-outline-light" id="unlockButton">Unlock</button>
-              <span class="text-light small">{{ .CurrentUserEmail }}</span>
-              <form method="post" action="/logout" class="d-inline">
-                <button type="submit" class="btn btn-sm btn-outline-light">Logout</button>
-              </form>
+            <div class="dropdown">
+              <button class="btn btn-sm btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                {{ .CurrentUserEmail }}
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li class="dropdown-item-text small text-muted">
+                  Status:
+                  {{ if .Unlocked }}
+                  <span class="text-success">Unlocked <span id="unlockTimer" data-seconds="{{ .UnlockSeconds }}">({{ .UnlockSeconds }}s)</span></span>
+                  {{ else }}
+                  <span class="text-secondary">Locked</span>
+                  {{ end }}
+                </li>
+                <li><hr class="dropdown-divider"></li>
+                {{ if .Unlocked }}
+                <li>
+                  <form method="post" action="/lock">
+                    <button type="submit" class="dropdown-item">Lock</button>
+                  </form>
+                </li>
+                {{ else }}
+                <li><button type="button" class="dropdown-item" id="unlockButton">Unlock</button></li>
+                {{ end }}
+                <li>
+                  <form method="post" action="/logout">
+                    <button type="submit" class="dropdown-item">Logout</button>
+                  </form>
+                </li>
+              </ul>
+            </div>
             {{ end }}
           </div>
         </div>

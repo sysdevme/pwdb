@@ -21,6 +21,18 @@
         <label class="form-label">Unlock Session Keep Alive (minutes)</label>
         <input type="number" name="unlock_minutes" min="1" max="120" class="form-control" value="{{ .Settings.UnlockMinutes }}">
       </div>
+      <div class="mb-3">
+        <label class="form-label">View Size</label>
+        <div class="d-flex flex-wrap gap-2">
+          <button class="btn btn-outline-secondary btn-sm" type="button" data-site-scale-opt="1">100% (Full)</button>
+          <button class="btn btn-outline-secondary btn-sm" type="button" data-site-scale-opt="0.9">90%</button>
+          <button class="btn btn-outline-secondary btn-sm" type="button" data-site-scale-opt="0.8">80%</button>
+          <button class="btn btn-outline-secondary btn-sm" type="button" data-site-scale-opt="0.7">70%</button>
+          <button class="btn btn-outline-secondary btn-sm" type="button" data-site-scale-opt="0.6">60%</button>
+          <button class="btn btn-outline-secondary btn-sm" type="button" data-site-scale-opt="0.5">50%</button>
+        </div>
+        <div class="small text-muted mt-1">Current: <span id="siteScaleLabel">100%</span></div>
+      </div>
       <div class="mb-3 form-check">
         <input type="checkbox" name="firewall_enabled" class="form-check-input" id="firewallEnabled" {{ if .Settings.Firewall }}checked{{ end }}>
         <label class="form-check-label" for="firewallEnabled">Firewall enabled (placeholder, not implemented yet)</label>

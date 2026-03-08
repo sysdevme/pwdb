@@ -152,10 +152,10 @@
               <th>Controller ID</th>
               <th>Weight</th>
               <th>Status</th>
-              <th>Last Seen</th>
+              <th>Last Seen (min)</th>
               <th>Token Updated</th>
               <th>Created</th>
-              <th>Updated</th>
+              <th>Updated (min)</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -173,10 +173,10 @@
               <td>
                 <span class="badge {{ if eq .Status "active" }}text-bg-success{{ else }}text-bg-secondary{{ end }}">{{ if eq .Status "active" }}Approved{{ else }}Non-approved{{ end }}</span>
               </td>
-              <td>{{ .LastSeenAt }}</td>
+              <td title="{{ .LastSeenAtAbs }}">{{ .LastSeenAt }}</td>
               <td>{{ .TokenUpdatedAt }}</td>
               <td>{{ .CreatedAt }}</td>
-              <td>{{ .UpdatedAt }}</td>
+              <td title="{{ .UpdatedAtAbs }}">{{ .UpdatedAt }}</td>
               <td>
                 <form method="post" action="/admin/controllers/status" class="d-inline">
                   <input type="hidden" name="controller_id" value="{{ .ControllerID }}">

@@ -2208,8 +2208,10 @@ type adminControllerRegistryView struct {
 	Weight         int
 	TokenUpdatedAt string
 	LastSeenAt     string
+	LastSeenAtAbs  string
 	CreatedAt      string
 	UpdatedAt      string
+	UpdatedAtAbs   string
 }
 
 type adminRemoteMasterLinkStatus struct {
@@ -2228,6 +2230,17 @@ func formatAdminTimestamp(ts time.Time) string {
 		return "-"
 	}
 	return ts.Format("2006-01-02 15:04:05")
+}
+
+func formatMinutesAgo(ts time.Time, now time.Time) string {
+	if ts.IsZero() {
+		return "-"
+	}
+	mins := int(now.Sub(ts).Minutes())
+	if mins < 0 {
+		mins = 0
+	}
+	return fmt.Sprintf("%d min ago", mins)
 }
 
 func classifyControllerLinkHealth(status string, lastHandshakeAt time.Time, now time.Time) string {
@@ -2327,6 +2340,7 @@ func (s *Server) adminPageData(ctx context.Context, message string) (map[string]
 				data["ControllerLinks"] = viewLinks
 			}
 			if registry, err := s.store.ListControllerRegistry(ctx); err == nil {
+				now := time.Now()
 				var viewRegistry []adminControllerRegistryView
 				for _, entry := range registry {
 					viewRegistry = append(viewRegistry, adminControllerRegistryView{
@@ -2334,9 +2348,11 @@ func (s *Server) adminPageData(ctx context.Context, message string) (map[string]
 						Status:         entry.Status,
 						Weight:         entry.Weight,
 						TokenUpdatedAt: formatAdminTimestamp(entry.TokenUpdatedAt),
-						LastSeenAt:     formatAdminTimestamp(entry.LastSeenAt),
+						LastSeenAt:     formatMinutesAgo(entry.LastSeenAt, now),
+						LastSeenAtAbs:  formatAdminTimestamp(entry.LastSeenAt),
 						CreatedAt:      formatAdminTimestamp(entry.CreatedAt),
-						UpdatedAt:      formatAdminTimestamp(entry.UpdatedAt),
+						UpdatedAt:      formatMinutesAgo(entry.UpdatedAt, now),
+						UpdatedAtAbs:   formatAdminTimestamp(entry.UpdatedAt),
 					})
 				}
 				data["ControllerRegistry"] = viewRegistry

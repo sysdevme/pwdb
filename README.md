@@ -56,6 +56,10 @@ Login:
 - Admin users navigation:
   - `Admin -> Users -> Create` (dedicated page)
   - `Admin -> Users -> List` (dedicated page)
+- Navbar account UX:
+  - Right side shows only user email dropdown
+  - Dropdown includes unlock status, Lock/Unlock action, and Logout
+  - View size controls moved from navbar to Settings page
 
 ## Experimental: master/slave + controller (under development)
 
