@@ -72,6 +72,35 @@
         {{ end }}
       </div>
       {{ end }}
+      {{ if and .AdminServerProfile (eq .AdminServerProfile.ServerMode "AS-S") .RemoteMasterLinkStatus }}
+      <div class="card mb-3 border-info-subtle">
+        <div class="card-body py-2">
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div>
+              <span class="fw-semibold">Remote Master Link Status:</span>
+              {{ if .RemoteMasterLinkStatus.Reachable }}
+              <span class="badge text-bg-success ms-2">reachable</span>
+              {{ else }}
+              <span class="badge text-bg-danger ms-2">offline/unreachable</span>
+              {{ end }}
+            </div>
+            <div class="small text-muted">checked: {{ .RemoteMasterLinkStatus.CheckedAt }}</div>
+          </div>
+          {{ if .RemoteMasterLinkStatus.Reachable }}
+          <div class="small mt-2">
+            links: <span class="fw-semibold">{{ .RemoteMasterLinkStatus.TotalLinks }}</span>,
+            active: <span class="fw-semibold text-success">{{ .RemoteMasterLinkStatus.ActiveLinks }}</span>,
+            stale: <span class="fw-semibold text-warning">{{ .RemoteMasterLinkStatus.StaleLinks }}</span>,
+            offline: <span class="fw-semibold text-danger">{{ .RemoteMasterLinkStatus.OfflineLinks }}</span>,
+            last handshake: <span class="fw-semibold">{{ .RemoteMasterLinkStatus.LatestHandshakeAt }}</span>
+          </div>
+          {{ else if .RemoteMasterLinkStatus.Error }}
+          <div class="small text-danger mt-2">{{ .RemoteMasterLinkStatus.Error }}</div>
+          {{ end }}
+        </div>
+      </div>
+      {{ end }}
+      {{ if and .AdminServerProfile (eq .AdminServerProfile.ServerMode "AS-M") }}
       {{ if .ControllerLinks }}
       <div class="table-responsive">
         <table class="table table-striped align-middle">
@@ -103,6 +132,7 @@
       </div>
       {{ else }}
       <div class="alert alert-secondary mb-0">No controller links yet.</div>
+      {{ end }}
       {{ end }}
       {{ if and .AdminServerProfile (eq .AdminServerProfile.ServerMode "AS-M") }}
       <hr class="my-4">

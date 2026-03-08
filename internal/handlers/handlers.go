@@ -164,6 +164,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/controller/controllers", s.handleControllerListControllers)
 	mux.HandleFunc("/controller/health", s.handleControllerHealth)
 	mux.HandleFunc("/controller/pair", s.handleControllerPair)
+	mux.HandleFunc("/controller/links/status", s.handleControllerLinksStatus)
 	mux.HandleFunc("/controller/snapshot/apply", s.handleControllerSnapshotApply)
 	mux.HandleFunc("/controller/update/apply", s.handleControllerUpdateApply)
 	mux.HandleFunc("/controller/update/ack", s.handleControllerUpdateAck)
@@ -628,6 +629,77 @@ func (s *Server) handleControllerPair(w http.ResponseWriter, r *http.Request) {
 		"status":          "paired",
 		"master_mode":     profile.ServerMode,
 		"slave_server_id": strings.TrimSpace(req.SlaveServerID),
+	})
+}
+
+func (s *Server) handleControllerLinksStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeController(w, r) {
+		return
+	}
+	profile, err := s.store.GetServerProfile(r.Context())
+	if err != nil {
+		http.Error(w, "server profile is not initialized", http.StatusConflict)
+		return
+	}
+	if profile.ServerMode != "AS-M" {
+		http.Error(w, "link status is allowed only on AS-M", http.StatusConflict)
+		return
+	}
+	links, err := s.store.ListControllerLinks(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	now := time.Now()
+	active := 0
+	stale := 0
+	offline := 0
+	latestHandshakeAt := time.Time{}
+	type row struct {
+		SlaveServerID   string `json:"slave_server_id"`
+		SlaveEndpoint   string `json:"slave_endpoint"`
+		Status          string `json:"status"`
+		Health          string `json:"health"`
+		LastHandshakeAt string `json:"last_handshake_at"`
+	}
+	rows := make([]row, 0, len(links))
+	for _, link := range links {
+		health := classifyControllerLinkHealth(link.Status, link.LastHandshakeAt, now)
+		switch health {
+		case "active":
+			active++
+		case "stale":
+			stale++
+		default:
+			offline++
+		}
+		if link.LastHandshakeAt.After(latestHandshakeAt) {
+			latestHandshakeAt = link.LastHandshakeAt
+		}
+		rows = append(rows, row{
+			SlaveServerID:   link.SlaveServerID,
+			SlaveEndpoint:   link.SlaveEndpoint,
+			Status:          link.Status,
+			Health:          health,
+			LastHandshakeAt: formatAdminTimestamp(link.LastHandshakeAt),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":      "ok",
+		"master_mode": profile.ServerMode,
+		"summary": map[string]any{
+			"total_links":          len(links),
+			"active_links":         active,
+			"stale_links":          stale,
+			"offline_links":        offline,
+			"latest_handshake_at":  formatAdminTimestamp(latestHandshakeAt),
+		},
+		"links":      rows,
+		"checked_at": now.UTC().Format(time.RFC3339),
 	})
 }
 
@@ -2136,11 +2208,92 @@ type adminControllerRegistryView struct {
 	UpdatedAt      string
 }
 
+type adminRemoteMasterLinkStatus struct {
+	Reachable         bool
+	Error             string
+	CheckedAt         string
+	TotalLinks        int
+	ActiveLinks       int
+	StaleLinks        int
+	OfflineLinks      int
+	LatestHandshakeAt string
+}
+
 func formatAdminTimestamp(ts time.Time) string {
 	if ts.IsZero() {
 		return "-"
 	}
 	return ts.Format("2006-01-02 15:04:05")
+}
+
+func classifyControllerLinkHealth(status string, lastHandshakeAt time.Time, now time.Time) string {
+	if strings.TrimSpace(status) != "active" {
+		return "offline"
+	}
+	age := now.Sub(lastHandshakeAt)
+	if age > 5*time.Minute {
+		return "offline"
+	}
+	if age > 90*time.Second {
+		return "stale"
+	}
+	return "active"
+}
+
+func (s *Server) fetchRemoteMasterLinkStatus(masterBaseURL string) adminRemoteMasterLinkStatus {
+	out := adminRemoteMasterLinkStatus{
+		Reachable: false,
+		CheckedAt: formatAdminTimestamp(time.Now()),
+	}
+	base := strings.TrimRight(strings.TrimSpace(masterBaseURL), "/")
+	if base == "" {
+		out.Error = "master URL is empty"
+		return out
+	}
+	token := strings.TrimSpace(os.Getenv("CONTROLLER_SHARED_TOKEN"))
+	if token == "" {
+		out.Error = "CONTROLLER_SHARED_TOKEN is not configured"
+		return out
+	}
+	req, err := http.NewRequest(http.MethodGet, base+"/controller/links/status", nil)
+	if err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	req.Header.Set("X-Controller-Token", token)
+	resp, err := s.controllerHTTPClient.Do(req)
+	if err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		out.Error = fmt.Sprintf("master returned %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		return out
+	}
+	var payload struct {
+		Summary struct {
+			TotalLinks        int    `json:"total_links"`
+			ActiveLinks       int    `json:"active_links"`
+			StaleLinks        int    `json:"stale_links"`
+			OfflineLinks      int    `json:"offline_links"`
+			LatestHandshakeAt string `json:"latest_handshake_at"`
+		} `json:"summary"`
+		CheckedAt string `json:"checked_at"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	out.Reachable = true
+	out.CheckedAt = payload.CheckedAt
+	out.TotalLinks = payload.Summary.TotalLinks
+	out.ActiveLinks = payload.Summary.ActiveLinks
+	out.StaleLinks = payload.Summary.StaleLinks
+	out.OfflineLinks = payload.Summary.OfflineLinks
+	out.LatestHandshakeAt = payload.Summary.LatestHandshakeAt
+	return out
 }
 
 func (s *Server) adminPageData(ctx context.Context, message string) (map[string]any, error) {
@@ -2158,17 +2311,7 @@ func (s *Server) adminPageData(ctx context.Context, message string) (map[string]
 				now := time.Now()
 				var viewLinks []adminControllerLinkView
 				for _, link := range links {
-					health := "active"
-					if link.Status != "active" {
-						health = "offline"
-					} else {
-						age := now.Sub(link.LastHandshakeAt)
-						if age > 5*time.Minute {
-							health = "offline"
-						} else if age > 90*time.Second {
-							health = "stale"
-						}
-					}
+					health := classifyControllerLinkHealth(link.Status, link.LastHandshakeAt, now)
 					viewLinks = append(viewLinks, adminControllerLinkView{
 						SlaveServerID:   link.SlaveServerID,
 						SlaveEndpoint:   link.SlaveEndpoint,
@@ -2195,6 +2338,7 @@ func (s *Server) adminPageData(ctx context.Context, message string) (map[string]
 			}
 		}
 		if profile.ServerMode == "AS-S" {
+			data["RemoteMasterLinkStatus"] = s.fetchRemoteMasterLinkStatus(profile.LinkedMasterURL)
 			if events, err := s.store.ListControllerUpdateEvents(ctx, 50); err == nil {
 				latestByVersion := make(map[int64]models.ControllerUpdateEvent)
 				for _, e := range events {

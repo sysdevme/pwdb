@@ -73,7 +73,7 @@ Current design:
   - Admin approval is required before operational token is issued
 - Admin telemetry:
   - Master: controller links, health, last handshake, registry approval state
-  - Slave: incoming controller events
+  - Slave: incoming controller events + remote master link status (reachability and link-health summary)
 - Periodic master -> slave health checks
 
 Current protocol endpoints:
@@ -86,6 +86,8 @@ Current protocol endpoints:
   - `POST /controller/update/apply`
 - Master -> Slave:
   - `GET /controller/health`
+- Controller -> Master (status query):
+  - `GET /controller/links/status`
 
 Controller companion status (`pwdb-controller`, separate repo/worktree):
 
@@ -143,6 +145,7 @@ Keep/customize them per environment.
 - Link freshness drift addressed with periodic health checks (`GET /controller/health`).
 - Unapproved controllers no longer receive operational token on first bootstrap.
 - Admin Users submenu flow changed to dedicated pages (removed dashboard modal race).
+- Slave admin now shows remote master link status (reachable/offline + active/stale/offline counts).
 
 </details>
 
