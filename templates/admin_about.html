@@ -1,0 +1,43 @@
+{{ define "content" }}
+<h1 class="h3 mb-3">Admin - About</h1>
+{{ if .IsAdmin }}
+  <div class="card">
+    <div class="card-body">
+      <h5 class="card-title">Build Metadata</h5>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <tbody>
+            <tr>
+              <th scope="row" style="width: 220px;">Version</th>
+              <td><code>{{ .BuildVersion }}</code></td>
+            </tr>
+            <tr>
+              <th scope="row">Author</th>
+              <td><code>{{ .BuildAuthor }}</code></td>
+            </tr>
+            <tr>
+              <th scope="row">Last Update</th>
+              <td><code>{{ .BuildLastUpdate }}</code></td>
+            </tr>
+            <tr>
+              <th scope="row">Repository</th>
+              <td>
+                {{ if .BuildRepoURL }}
+                <a href="{{ .BuildRepoURL }}" target="_blank" rel="noopener noreferrer">{{ .BuildRepoURL }}</a>
+                {{ else }}
+                <code>not set</code>
+                {{ end }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small text-muted mt-3 mb-0">
+        Source: <code>static/version.json</code>
+      </p>
+    </div>
+  </div>
+{{ else }}
+  <div class="alert alert-danger">Forbidden</div>
+{{ end }}
+{{ end }}

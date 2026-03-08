@@ -66,7 +66,7 @@
           <span class="pm-mode-dot badge {{ .ServerModeClass }}" title="Server mode {{ .ServerMode }}">{{ .ServerModeCode }}</span>
           {{ end }}
           <span>Un1t PM</span>
-          <span id="appBuildInfo" class="small text-light-emphasis" data-fallback-version="{{ .AppVersion }}"></span>
+          <span class="small text-light-emphasis">v{{ .BuildVersion }}</span>
         </a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain" aria-controls="navMain" aria-expanded="false" aria-label="Toggle navigation">
           <span class="navbar-toggler-icon"></span>
@@ -114,6 +114,8 @@
                   <li><a class="dropdown-item" href="/admin/users/list">List</a></li>
                   <li><hr class="dropdown-divider"></li>
                   <li><a class="dropdown-item" href="/import/1password">Import</a></li>
+                  <li><hr class="dropdown-divider"></li>
+                  <li><a class="dropdown-item" href="/admin/about">About</a></li>
                 </ul>
               </div>
             </li>
@@ -284,31 +286,6 @@
           showUnlockPasswordModal(nextPath);
         }
       }
-      (function () {
-        const target = document.getElementById("appBuildInfo");
-        if (!target) return;
-        const fallbackVersion = String(target.getAttribute("data-fallback-version") || "").trim();
-        fetch("/static/version.json", { cache: "no-store" })
-          .then((response) => {
-            if (!response.ok) {
-              throw new Error("version metadata unavailable");
-            }
-            return response.json();
-          })
-          .then((meta) => {
-            const version = String(meta.version || fallbackVersion).trim();
-            const author = String(meta.author || "").trim();
-            const lastUpdate = String(meta.last_update || "").trim();
-            const parts = [];
-            if (version) parts.push("v" + version);
-            if (author) parts.push(author);
-            if (lastUpdate) parts.push(lastUpdate);
-            target.textContent = parts.join(" | ");
-          })
-          .catch(() => {
-            target.textContent = fallbackVersion ? "v" + fallbackVersion : "";
-          });
-      })();
       (function () {
         const btn = document.getElementById("unlockButton");
         if (btn) {

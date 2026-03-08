@@ -40,6 +40,8 @@ const (
 	defaultPageSize               = 10
 	defaultUnlockMinutes          = 5
 	defaultAppVersion             = "4.0.4"
+	defaultBuildAuthor            = "unknown"
+	defaultBuildLastUpdate        = "unknown"
 	controllerHealthcheckInterval = 30 * time.Second
 	controllerHealthcheckTimeout  = 5 * time.Second
 	serviceRestartTriggerDelay    = 500 * time.Millisecond
@@ -90,6 +92,13 @@ type controllerAuthTokenResponse struct {
 	NextToken string `json:"next_token,omitempty"`
 	Status    string `json:"status"`
 	Approved  bool   `json:"approved"`
+}
+
+type buildMetadata struct {
+	Version    string `json:"version"`
+	Author     string `json:"author"`
+	LastUpdate string `json:"last_update"`
+	RepoURL    string `json:"repo_url"`
 }
 
 type Server struct {
@@ -209,6 +218,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/admin/users", s.handleAdminCreateUser)
 	mux.HandleFunc("/admin/users/create", s.handleAdminUsersCreatePage)
 	mux.HandleFunc("/admin/users/list", s.handleAdminUsersListPage)
+	mux.HandleFunc("/admin/about", s.handleAdminAboutPage)
 	mux.HandleFunc("/admin/users/update", s.handleAdminUpdateUser)
 	mux.HandleFunc("/admin/controllers/status", s.handleAdminSetControllerStatus)
 	mux.HandleFunc("/admin/controllers/weight", s.handleAdminSetControllerWeight)
@@ -2699,6 +2709,26 @@ func (s *Server) handleAdminUsersListPage(w http.ResponseWriter, r *http.Request
 	s.renderAdminUsersListPage(w, r, "")
 }
 
+func (s *Server) handleAdminAboutPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok || !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	version, author, lastUpdate, repoURL := s.loadBuildMetadata()
+	s.renderWithUnlock(w, r, "admin_about.html", map[string]any{
+		"Title":           "Admin - About",
+		"BuildVersion":    version,
+		"BuildAuthor":     author,
+		"BuildLastUpdate": lastUpdate,
+		"BuildRepoURL":    repoURL,
+	})
+}
+
 func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -3386,7 +3416,44 @@ func (s *Server) renderWithUnlock(w http.ResponseWriter, r *http.Request, page s
 		data["CurrentUserEmail"] = user.Email
 		data["IsAdmin"] = user.IsAdmin
 	}
+	buildVersion, buildAuthor, buildLastUpdate, buildRepoURL := s.loadBuildMetadata()
+	data["BuildVersion"] = buildVersion
+	data["BuildAuthor"] = buildAuthor
+	data["BuildLastUpdate"] = buildLastUpdate
+	data["BuildRepoURL"] = buildRepoURL
 	s.render(w, page, data)
+}
+
+func (s *Server) loadBuildMetadata() (string, string, string, string) {
+	buildVersion := strings.TrimSpace(os.Getenv("APP_VERSION"))
+	if buildVersion == "" {
+		buildVersion = defaultAppVersion
+	}
+	buildAuthor := defaultBuildAuthor
+	buildLastUpdate := defaultBuildLastUpdate
+	buildRepoURL := ""
+
+	raw, err := os.ReadFile(filepath.Join("static", "version.json"))
+	if err != nil {
+		return buildVersion, buildAuthor, buildLastUpdate, buildRepoURL
+	}
+	var meta buildMetadata
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return buildVersion, buildAuthor, buildLastUpdate, buildRepoURL
+	}
+	if strings.TrimSpace(meta.Version) != "" {
+		buildVersion = strings.TrimSpace(meta.Version)
+	}
+	if strings.TrimSpace(meta.Author) != "" {
+		buildAuthor = strings.TrimSpace(meta.Author)
+	}
+	if strings.TrimSpace(meta.LastUpdate) != "" {
+		buildLastUpdate = strings.TrimSpace(meta.LastUpdate)
+	}
+	if strings.TrimSpace(meta.RepoURL) != "" {
+		buildRepoURL = strings.TrimSpace(meta.RepoURL)
+	}
+	return buildVersion, buildAuthor, buildLastUpdate, buildRepoURL
 }
 
 func (s *Server) handleUnlockPage(w http.ResponseWriter, r *http.Request) {

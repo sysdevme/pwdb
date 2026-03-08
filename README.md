@@ -194,8 +194,10 @@ Fields:
 - `version`
 - `author`
 - `last_update`
+- `repo_url`
 
-The navbar brand section reads this file and shows `v<version> | <author> | <last_update>` near `Un1t PM`.
+The navbar brand section reads this file and shows `v<version>` near `Un1t PM`.
+The backend also reads this file and exposes metadata in `Admin -> About`.
 
 ## Local dev scripts
 
