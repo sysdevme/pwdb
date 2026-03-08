@@ -5,3 +5,6 @@ bin/
 /scripts/
 /certs/
 
+
+# local Windows helper
+scripts/make.bat

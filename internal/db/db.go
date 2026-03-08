@@ -1047,6 +1047,21 @@ func (s *Store) UpdateUserCredentials(ctx context.Context, userID string, loginH
 	return err
 }
 
+func (s *Store) UpdateUserRole(ctx context.Context, userID string, isAdmin bool) error {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, sqlUpdateUserRole, uid, isAdmin)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("user not found")
+	}
+	return nil
+}
+
 func (s *Store) SetUserStatus(ctx context.Context, userID string, status string) error {
 	uid, err := uuid.Parse(userID)
 	if err != nil {

@@ -1,6 +1,7 @@
 # Password Manager (Go) - Unified README
 
 Default development branch: `v4`.
+Current release tag: `4.0.6`.
 
 This repository now combines:
 

@@ -388,6 +388,12 @@ const (
 		WHERE id = $1
 	`
 
+	sqlUpdateUserRole = `
+		UPDATE users
+		SET is_admin = $2
+		WHERE id = $1
+	`
+
 	sqlSetUserStatus = `
 		UPDATE users
 		SET status = $2

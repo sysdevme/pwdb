@@ -45,6 +45,11 @@ const (
 	controllerHealthcheckInterval = 30 * time.Second
 	controllerHealthcheckTimeout  = 5 * time.Second
 	serviceRestartTriggerDelay    = 500 * time.Millisecond
+	requestLogCapacity            = 500
+	requestLogAdminLimit          = 20
+	loginBlockThreshold           = 3
+	loginBlockMaxMinutes          = 15
+	adminProbeBlockMinutes        = 5
 )
 
 type uiSettings struct {
@@ -113,6 +118,37 @@ type Server struct {
 	crypto               *crypto.Service
 	unlock               *unlockManager
 	controllerHTTPClient *http.Client
+	requestLogMu         sync.Mutex
+	requestLogs          []requestLogEntry
+	loginGuardMu         sync.Mutex
+	loginGuardByIP       map[string]loginGuardState
+	adminProbeMu         sync.Mutex
+	adminProbeBlockedIPs map[string]time.Time
+}
+
+type requestLogEntry struct {
+	At         time.Time
+	Method     string
+	Path       string
+	RemoteIP   string
+	StatusCode int
+	DurationMS int64
+}
+
+type requestLogStatusRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+type loginGuardState struct {
+	Failures     int
+	BlockedUntil time.Time
+	LastSeen     time.Time
+}
+
+func (r *requestLogStatusRecorder) WriteHeader(statusCode int) {
+	r.statusCode = statusCode
+	r.ResponseWriter.WriteHeader(statusCode)
 }
 
 func isSecureRequest(r *http.Request) bool {
@@ -134,6 +170,9 @@ func NewServer(templates *template.Template, store *db.Store, cryptoSvc *crypto.
 		controllerHTTPClient: &http.Client{
 			Timeout: controllerHealthcheckTimeout,
 		},
+		requestLogs:          make([]requestLogEntry, 0, requestLogCapacity),
+		loginGuardByIP:       make(map[string]loginGuardState),
+		adminProbeBlockedIPs: make(map[string]time.Time),
 	}
 	srv.startControllerLinkHealthcheckLoop()
 	return srv
@@ -231,16 +270,18 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/admin/users/list", s.handleAdminUsersListPage)
 	mux.HandleFunc("/admin/about", s.handleAdminAboutPage)
 	mux.HandleFunc("/admin/users/update", s.handleAdminUpdateUser)
+	mux.HandleFunc("/admin/users/role", s.handleAdminUpdateUserRole)
 	mux.HandleFunc("/admin/controllers/status", s.handleAdminSetControllerStatus)
 	mux.HandleFunc("/admin/controllers/weight", s.handleAdminSetControllerWeight)
 	mux.HandleFunc("/admin/controllers/cleanup-stale", s.handleAdminCleanupStaleControllers)
 	mux.HandleFunc("/admin/controller-links/cleanup", s.handleAdminCleanupControllerLinks)
+	mux.HandleFunc("/admin/request-logs", s.handleAdminRequestLogs)
 	mux.HandleFunc("/admin/service/restart", s.handleAdminServiceRestart)
 	mux.HandleFunc("/admin/records/clear-tags", s.handleAdminClearRecordTags)
 	mux.HandleFunc("/admin/records/clear-groups", s.handleAdminClearRecordGroups)
 	mux.HandleFunc("/admin/tags/clear-all", s.handleAdminClearAllTags)
 	mux.HandleFunc("/admin/groups/clear-all", s.handleAdminClearAllGroups)
-	return s.authMiddleware(mux)
+	return s.requestLogMiddleware(s.authMiddleware(mux))
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -276,16 +317,30 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
+		clientIP := clientIPFromRequest(r)
+		if blockedFor := s.loginBlockedFor(clientIP); blockedFor > 0 {
+			s.renderWithUnlock(w, r, "login.html", map[string]any{
+				"Title": "Login",
+				"Error": "you are wrong, don't repeat it",
+			})
+			return
+		}
 		email := strings.TrimSpace(r.FormValue("email"))
 		password := r.FormValue("password")
 		user, err := s.store.GetUserByEmail(r.Context(), email)
 		if err != nil || !crypto.VerifyPassword(password, user.PasswordHash) {
+			blockedFor := s.recordLoginFailure(clientIP)
+			errMsg := "Invalid credentials"
+			if blockedFor > 0 {
+				errMsg = "you are wrong, don't repeat it"
+			}
 			s.renderWithUnlock(w, r, "login.html", map[string]any{
 				"Title": "Login",
-				"Error": "Invalid credentials",
+				"Error": errMsg,
 			})
 			return
 		}
+		s.clearLoginFailures(clientIP)
 		if user.Status != "active" {
 			if err := s.store.SetUserStatus(r.Context(), user.ID, "active"); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -2703,6 +2758,15 @@ type adminRemoteMasterLinkStatus struct {
 	LatestHandshakeAt string
 }
 
+type adminRequestLogView struct {
+	At         string `json:"at"`
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	RemoteIP   string `json:"remote_ip"`
+	StatusCode int    `json:"status_code"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
 func formatAdminTimestamp(ts time.Time) string {
 	if ts.IsZero() {
 		return "-"
@@ -2795,6 +2859,8 @@ func (s *Server) adminPageData(ctx context.Context, message string) (map[string]
 	data := map[string]any{
 		"Title":                 "Admin",
 		"ServiceRestartEnabled": isUIServiceRestartEnabled(),
+		"RequestLogs":           s.latestRequestLogs(requestLogAdminLimit),
+		"RequestLogLimit":       requestLogAdminLimit,
 	}
 	if message != "" {
 		data["Message"] = message
@@ -2912,6 +2978,24 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderAdminPage(w, r, "")
+}
+
+func (s *Server) handleAdminRequestLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok || !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	pathFilter := strings.TrimSpace(r.URL.Query().Get("path"))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":       s.latestRequestLogsFiltered(requestLogAdminLimit, pathFilter),
+		"path_filter": pathFilter,
+		"generatedAt": formatAdminTimestamp(time.Now()),
+	})
 }
 
 func (s *Server) handleAdminUsersCreatePage(w http.ResponseWriter, r *http.Request) {
@@ -3060,6 +3144,56 @@ func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderAdminUsersListPage(w, r, "User updated.")
+}
+
+func (s *Server) handleAdminUpdateUserRole(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok || !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	targetID := strings.TrimSpace(r.FormValue("user_id"))
+	role := strings.ToLower(strings.TrimSpace(r.FormValue("role")))
+	if targetID == "" {
+		http.Error(w, "missing user id", http.StatusBadRequest)
+		return
+	}
+	var makeAdmin bool
+	switch role {
+	case "admin":
+		makeAdmin = true
+	case "user":
+		makeAdmin = false
+	default:
+		http.Error(w, "invalid role", http.StatusBadRequest)
+		return
+	}
+	// Prevent locking yourself out of admin controls.
+	if targetID == user.ID && !makeAdmin {
+		s.renderAdminUsersListPage(w, r, "Cannot remove your own admin role.")
+		return
+	}
+	if err := s.store.UpdateUserRole(r.Context(), targetID, makeAdmin); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if makeAdmin {
+		s.renderAdminUsersListPage(w, r, "User role updated to Admin.")
+		return
+	}
+	s.renderAdminUsersListPage(w, r, "User role updated to User.")
 }
 
 func (s *Server) handleAdminSetControllerStatus(w http.ResponseWriter, r *http.Request) {
@@ -3785,9 +3919,195 @@ func (s *Server) handleUnlockPage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) requestLogMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &requestLogStatusRecorder{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+		}
+		next.ServeHTTP(rec, r)
+		if r.URL.Path == "/admin/request-logs" {
+			return
+		}
+		s.appendRequestLog(requestLogEntry{
+			At:         start,
+			Method:     r.Method,
+			Path:       r.URL.RequestURI(),
+			RemoteIP:   clientIPFromRequest(r),
+			StatusCode: rec.statusCode,
+			DurationMS: time.Since(start).Milliseconds(),
+		})
+	})
+}
+
+func (s *Server) appendRequestLog(item requestLogEntry) {
+	s.requestLogMu.Lock()
+	defer s.requestLogMu.Unlock()
+	s.requestLogs = append(s.requestLogs, item)
+	if len(s.requestLogs) > requestLogCapacity {
+		s.requestLogs = s.requestLogs[len(s.requestLogs)-requestLogCapacity:]
+	}
+}
+
+func (s *Server) latestRequestLogs(limit int) []adminRequestLogView {
+	return s.latestRequestLogsFiltered(limit, "")
+}
+
+func (s *Server) latestRequestLogsFiltered(limit int, pathFilter string) []adminRequestLogView {
+	if limit <= 0 {
+		limit = requestLogAdminLimit
+	}
+	pathFilter = strings.TrimSpace(strings.ToLower(pathFilter))
+	s.requestLogMu.Lock()
+	defer s.requestLogMu.Unlock()
+	if len(s.requestLogs) == 0 {
+		return nil
+	}
+	out := make([]adminRequestLogView, 0, limit)
+	for i := len(s.requestLogs) - 1; i >= 0 && len(out) < limit; i-- {
+		item := s.requestLogs[i]
+		if pathFilter != "" && !strings.Contains(strings.ToLower(item.Path), pathFilter) {
+			continue
+		}
+		out = append(out, adminRequestLogView{
+			At:         formatAdminTimestamp(item.At),
+			Method:     item.Method,
+			Path:       item.Path,
+			RemoteIP:   item.RemoteIP,
+			StatusCode: item.StatusCode,
+			DurationMS: item.DurationMS,
+		})
+	}
+	return out
+}
+
+func clientIPFromRequest(r *http.Request) string {
+	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
+		parts := strings.Split(xff, ",")
+		if len(parts) > 0 {
+			return strings.TrimSpace(parts[0])
+		}
+	}
+	if rip := strings.TrimSpace(r.Header.Get("X-Real-IP")); rip != "" {
+		return rip
+	}
+	addr := strings.TrimSpace(r.RemoteAddr)
+	if i := strings.LastIndex(addr, ":"); i > 0 {
+		return addr[:i]
+	}
+	return addr
+}
+
+func (s *Server) loginBlockedFor(clientIP string) time.Duration {
+	ip := strings.TrimSpace(clientIP)
+	if ip == "" {
+		return 0
+	}
+	now := time.Now()
+	s.loginGuardMu.Lock()
+	defer s.loginGuardMu.Unlock()
+	state, ok := s.loginGuardByIP[ip]
+	if !ok {
+		return 0
+	}
+	if now.After(state.BlockedUntil) {
+		return 0
+	}
+	return time.Until(state.BlockedUntil)
+}
+
+func (s *Server) recordLoginFailure(clientIP string) time.Duration {
+	ip := strings.TrimSpace(clientIP)
+	if ip == "" {
+		return 0
+	}
+	now := time.Now()
+	s.loginGuardMu.Lock()
+	defer s.loginGuardMu.Unlock()
+	state := s.loginGuardByIP[ip]
+	state.Failures++
+	state.LastSeen = now
+	if state.Failures >= loginBlockThreshold {
+		blockMinutes := state.Failures
+		if blockMinutes > loginBlockMaxMinutes {
+			blockMinutes = loginBlockMaxMinutes
+		}
+		state.BlockedUntil = now.Add(time.Duration(blockMinutes) * time.Minute)
+	}
+	s.loginGuardByIP[ip] = state
+	if now.Before(state.BlockedUntil) {
+		return time.Until(state.BlockedUntil)
+	}
+	return 0
+}
+
+func (s *Server) clearLoginFailures(clientIP string) {
+	ip := strings.TrimSpace(clientIP)
+	if ip == "" {
+		return
+	}
+	s.loginGuardMu.Lock()
+	defer s.loginGuardMu.Unlock()
+	delete(s.loginGuardByIP, ip)
+}
+
+func (s *Server) blockAdminAccess(clientIP string, duration time.Duration) {
+	ip := strings.TrimSpace(clientIP)
+	if ip == "" || duration <= 0 {
+		return
+	}
+	s.adminProbeMu.Lock()
+	defer s.adminProbeMu.Unlock()
+	s.adminProbeBlockedIPs[ip] = time.Now().Add(duration)
+}
+
+func (s *Server) adminBlockedFor(clientIP string) time.Duration {
+	ip := strings.TrimSpace(clientIP)
+	if ip == "" {
+		return 0
+	}
+	now := time.Now()
+	s.adminProbeMu.Lock()
+	defer s.adminProbeMu.Unlock()
+	until, ok := s.adminProbeBlockedIPs[ip]
+	if !ok {
+		return 0
+	}
+	if now.After(until) {
+		delete(s.adminProbeBlockedIPs, ip)
+		return 0
+	}
+	return time.Until(until)
+}
+
+func formatDurationRoundedMinute(d time.Duration) string {
+	if d <= 0 {
+		return "1 minute"
+	}
+	mins := int((d + time.Minute - 1) / time.Minute)
+	if mins <= 1 {
+		return "1 minute"
+	}
+	return fmt.Sprintf("%d minutes", mins)
+}
+
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
+		clientIP := clientIPFromRequest(r)
+		if strings.HasPrefix(path, "/admin") {
+			if blockedFor := s.adminBlockedFor(clientIP); blockedFor > 0 {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			// /admin does not require query parameters; treat them as suspicious probes.
+			if path == "/admin" && strings.TrimSpace(r.URL.RawQuery) != "" {
+				s.blockAdminAccess(clientIP, time.Duration(adminProbeBlockMinutes)*time.Minute)
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		}
 		if strings.HasPrefix(path, "/static/") || strings.HasPrefix(path, "/controller/") || path == "/login" || path == "/setup" || path == "/auth/biometric-token" || path == "/share/password" {
 			next.ServeHTTP(w, r)
 			return

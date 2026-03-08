@@ -6,6 +6,53 @@
   {{ end }}
   <div class="card mb-4">
     <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h5 class="card-title mb-0">Request Logs (:8080)</h5>
+        <span class="small text-muted">Last {{ .RequestLogLimit }} requests, refresh every 10s</span>
+      </div>
+      <form id="requestLogsFilterForm" class="row g-2 mb-2">
+        <div class="col-md-6">
+          <input type="text" id="requestLogsPathFilter" class="form-control form-control-sm" placeholder='Path filter, e.g. /login'>
+        </div>
+        <div class="col-auto">
+          <button class="btn btn-sm btn-outline-secondary" type="submit">Apply Filter</button>
+        </div>
+      </form>
+      <div class="small text-muted mb-2">Updated: <span id="requestLogsUpdatedAt">-</span></div>
+      <div class="table-responsive">
+        <table class="table table-sm table-striped align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Method</th>
+              <th>Path</th>
+              <th>Status</th>
+              <th>Duration</th>
+              <th>Client IP</th>
+            </tr>
+          </thead>
+          <tbody id="requestLogsBody">
+            {{ if .RequestLogs }}
+              {{ range .RequestLogs }}
+              <tr>
+                <td>{{ .At }}</td>
+                <td><code>{{ .Method }}</code></td>
+                <td><code>{{ .Path }}</code></td>
+                <td>{{ .StatusCode }}</td>
+                <td>{{ .DurationMS }} ms</td>
+                <td><code>{{ .RemoteIP }}</code></td>
+              </tr>
+              {{ end }}
+            {{ else }}
+              <tr><td colspan="6" class="text-muted">No requests yet.</td></tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="card mb-4">
+    <div class="card-body">
       <h5 class="card-title">Backup</h5>
       <p class="card-text">Export passwords and notes to a JSON file.</p>
       <a class="btn btn-primary" href="/admin/backup" id="backupButton">Download Backup</a>
@@ -439,5 +486,62 @@
       }
       bootstrap.Modal.getOrCreateInstance(modalEl).show();
     });
+
+    const requestLogsBody = document.getElementById("requestLogsBody");
+    const requestLogsUpdatedAt = document.getElementById("requestLogsUpdatedAt");
+    const requestLogsFilterForm = document.getElementById("requestLogsFilterForm");
+    const requestLogsPathFilter = document.getElementById("requestLogsPathFilter");
+    async function refreshRequestLogs() {
+      if (!requestLogsBody) return;
+      try {
+        const filterValue = requestLogsPathFilter ? requestLogsPathFilter.value.trim() : "";
+        const endpoint = filterValue
+          ? "/admin/request-logs?path=" + encodeURIComponent(filterValue)
+          : "/admin/request-logs";
+        const resp = await fetch(endpoint, { headers: { "Accept": "application/json" } });
+        if (!resp.ok) return;
+        const payload = await resp.json();
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        if (requestLogsUpdatedAt) {
+          requestLogsUpdatedAt.textContent = payload.generatedAt || "-";
+        }
+        if (items.length === 0) {
+          requestLogsBody.innerHTML = '<tr><td colspan="6" class="text-muted">No requests yet.</td></tr>';
+          return;
+        }
+        const esc = (v) => String(v)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+        const rows = items.map((item) => {
+          const at = item.at || "-";
+          const method = item.method || "-";
+          const path = item.path || "-";
+          const statusCode = item.status_code == null ? "-" : String(item.status_code);
+          const durationMS = item.duration_ms == null ? "-" : String(item.duration_ms) + " ms";
+          const remoteIP = item.remote_ip || "-";
+          return '<tr>' +
+            '<td>' + esc(at) + '</td>' +
+            '<td><code>' + esc(method) + '</code></td>' +
+            '<td><code>' + esc(path) + '</code></td>' +
+            '<td>' + esc(statusCode) + '</td>' +
+            '<td>' + esc(durationMS) + '</td>' +
+            '<td><code>' + esc(remoteIP) + '</code></td>' +
+            '</tr>';
+        }).join("");
+        requestLogsBody.innerHTML = rows;
+      } catch (e) {
+      }
+    }
+    if (requestLogsFilterForm) {
+      requestLogsFilterForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        refreshRequestLogs();
+      });
+    }
+    refreshRequestLogs();
+    setInterval(refreshRequestLogs, 10000);
   })();
 </script>
