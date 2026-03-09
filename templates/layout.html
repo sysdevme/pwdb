@@ -56,7 +56,7 @@
     <form id="pm-bio-unlock-form" method="POST" action="/auth/biometric-unlock" style="display:none">
       <input type="hidden" name="token" id="pm-bio-token" value="">
       <input type="hidden" name="next" id="pm-bio-next" value="">
-      <input type="hidden" name="unlock_minutes" id="pm-bio-unlock-minutes" value="5">
+      <input type="hidden" name="unlock_minutes" id="pm-bio-unlock-minutes" value="{{ .UnlockMinutesDefault }}">
     </form>
     {{ if and .CurrentUserEmail (ne .RequestPath "/login") (ne .RequestPath "/setup") }}
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
@@ -214,7 +214,7 @@
               <input type="hidden" name="next" id="unlockNext" value="{{ .RequestPath }}">
               <div class="mb-3">
                 <label class="form-label">Unlock Duration (minutes)</label>
-                <input type="number" name="unlock_minutes" class="form-control" id="unlockMinutesInput" value="5" min="1" max="120" required>
+                <input type="number" name="unlock_minutes" class="form-control" id="unlockMinutesInput" value="{{ .UnlockMinutesDefault }}" min="1" max="120" required>
               </div>
               <div class="mb-3">
                 <label class="form-label">Master Password</label>
@@ -270,9 +270,9 @@
       }
       function getRequestedUnlockMinutes() {
         const input = document.getElementById("unlockMinutesInput");
-        if (!input) return 5;
-        let value = parseInt(input.value || "5", 10);
-        if (isNaN(value)) value = 5;
+        if (!input) return {{ .UnlockMinutesDefault }};
+        let value = parseInt(input.value || "{{ .UnlockMinutesDefault }}", 10);
+        if (isNaN(value)) value = {{ .UnlockMinutesDefault }};
         if (value < 1) value = 1;
         if (value > 120) value = 120;
         input.value = String(value);

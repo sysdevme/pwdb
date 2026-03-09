@@ -3755,11 +3755,13 @@ func (s *Server) renderWithUnlock(w http.ResponseWriter, r *http.Request, page s
 	if data == nil {
 		data = map[string]any{}
 	}
+	settings := s.readUISettings(r)
 	appVersion := strings.TrimSpace(os.Getenv("APP_VERSION"))
 	if appVersion == "" {
 		appVersion = defaultAppVersion
 	}
 	data["AppVersion"] = appVersion
+	data["UnlockMinutesDefault"] = settings.UnlockMinutes
 	data["Unlocked"] = s.isUnlocked(r)
 	data["UnlockSeconds"] = s.unlockRemainingSeconds(r)
 	data["RequestPath"] = r.URL.Path

@@ -4,11 +4,12 @@
   <button type="button" class="btn btn-outline-primary" onclick="unlockWithBiometric()">Unlock with Touch ID</button>
 </div>
 <form method="post" action="/auth/biometric-unlock">
+  <input type="hidden" name="unlock_minutes" value="{{ .UnlockMinutesDefault }}">
   <div class="mb-3">
     <label class="form-label">Master Password</label>
     <input type="password" name="master_password" class="form-control" required>
   </div>
-  <button class="btn btn-primary" type="submit">Unlock for 5 minutes</button>
+  <button class="btn btn-primary" type="submit">Unlock for {{ .UnlockMinutesDefault }} minutes</button>
   <a class="btn btn-outline-secondary" href="/">Cancel</a>
 </form>
 {{ end }}
