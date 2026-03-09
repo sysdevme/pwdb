@@ -1000,9 +1000,14 @@ func (s *Server) applyControllerSnapshot(ctx context.Context, snapshot controlle
 		"password_shares": 0,
 		"note_shares":     0,
 	}
+	userIDMap := make(map[string]string, len(snapshot.Users))
 	for _, user := range snapshot.Users {
+		targetUserID := user.ID
+		if existing, err := s.store.GetUserByEmail(ctx, strings.TrimSpace(user.Email)); err == nil {
+			targetUserID = existing.ID
+		}
 		if err := s.store.UpsertUserReplica(ctx, models.User{
-			ID:                 user.ID,
+			ID:                 targetUserID,
 			Email:              user.Email,
 			Status:             user.Status,
 			PasswordHash:       user.PasswordHash,
@@ -1011,15 +1016,22 @@ func (s *Server) applyControllerSnapshot(ctx context.Context, snapshot controlle
 		}); err != nil {
 			return nil, err
 		}
+		userIDMap[user.ID] = targetUserID
 		applied["users"]++
 	}
 	for _, entry := range snapshot.Passwords {
+		if mappedID, ok := userIDMap[entry.UserID]; ok {
+			entry.UserID = mappedID
+		}
 		if err := s.store.UpsertPassword(ctx, s.crypto, entry); err != nil {
 			return nil, err
 		}
 		applied["passwords"]++
 	}
 	for _, note := range snapshot.Notes {
+		if mappedID, ok := userIDMap[note.UserID]; ok {
+			note.UserID = mappedID
+		}
 		if err := s.store.InsertSecureNote(ctx, s.crypto, note); err != nil {
 			return nil, err
 		}
