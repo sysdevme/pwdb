@@ -1,4 +1,4 @@
-.PHONY: build run docker-up docker-down docker-build test macos-helper restart restart-helper restart-all
+.PHONY: build run docker-up docker-down docker-build test macos-helper restart restart-helper restart-all repo-update repo-push
 
 DOCKER_COMPOSE ?= $(shell if command -v docker-compose >/dev/null 2>&1; then echo docker-compose; else echo "docker compose"; fi)
 COMPOSE_FILE ?= docker-compose.yml
@@ -28,6 +28,14 @@ restart-helper:
 
 restart-all: restart restart-helper
 
+repo-update:
+	git fetch --all --prune --tags
+	git pull --ff-only origin $$(git rev-parse --abbrev-ref HEAD)
+repo-push:
+	@if [ -z "$(m)" ]; then echo "Usage: make repo-push m='commit message'"; exit 1; fi
+	git add -A
+	git commit -m "$(m)"
+	git push origin $$(git rev-parse --abbrev-ref HEAD)
 test:
 	go test ./...
 
