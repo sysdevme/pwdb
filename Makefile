@@ -2,6 +2,8 @@
 
 DOCKER_COMPOSE ?= $(shell if command -v docker-compose >/dev/null 2>&1; then echo docker-compose; else echo "docker compose"; fi)
 COMPOSE_FILE ?= docker-compose.yml
+GIT_REMOTE ?= origin
+GIT_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
 
 build:
 	go build -o bin/server ./cmd/server
@@ -30,12 +32,19 @@ restart-all: restart restart-helper
 
 repo-update:
 	git fetch --all --prune --tags
-	git pull --ff-only origin $$(git rev-parse --abbrev-ref HEAD)
+	git pull --ff-only $(GIT_REMOTE) $(GIT_BRANCH)
 repo-push:
 	@if [ -z "$(m)" ]; then echo "Usage: make repo-push m='commit message'"; exit 1; fi
 	git add -A
-	git commit -m "$(m)"
-	git push origin $$(git rev-parse --abbrev-ref HEAD)
+	@if git diff --cached --quiet; then \
+		echo "No staged changes to commit. Skipping commit."; \
+	else \
+		git commit -m "$(m)"; \
+	fi
+	@git push $(GIT_REMOTE) $(GIT_BRANCH) || { \
+		echo "Push failed. Check Git auth (SSH key/token) and remote URL."; \
+		exit 1; \
+	}
 test:
 	go test ./...
 
