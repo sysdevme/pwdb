@@ -35,6 +35,35 @@ docker compose up --build
 
 App: `http://localhost:8080`
 
+Compose host bind is controlled from `.env`:
+
+- `APP_HOST_BIND_IP` default `0.0.0.0`
+- `APP_HOST_BIND_PORT` default `8080`
+- `APP_CONTAINER_PORT` default `8080`
+
+Compose uses:
+
+```yaml
+"${APP_HOST_BIND_IP}:${APP_HOST_BIND_PORT}:${APP_CONTAINER_PORT}"
+```
+
+`APP_CONTAINER_PORT` should match the port configured in `APP_ADDR`.
+If you leave `APP_ADDR=:8080`, keep `APP_CONTAINER_PORT=8080`.
+
+If Docker reports a bind error such as “cannot assign requested address”, the host does not have that IP configured.
+When unsure, use `APP_HOST_BIND_IP=0.0.0.0`.
+
+Examples:
+
+- Master node:
+  - `APP_HOST_BIND_IP=10.8.0.1`
+  - `APP_HOST_BIND_PORT=80`
+  - `APP_CONTAINER_PORT=8080`
+- Slave node:
+  - `APP_HOST_BIND_IP=10.8.0.2`
+  - `APP_HOST_BIND_PORT=8080`
+  - `APP_CONTAINER_PORT=8080`
+
 First setup:
 
 - `http://localhost:8080/setup`
@@ -237,6 +266,14 @@ Controller-related variables:
 
 - `CONTROLLER_SHARED_TOKEN`
 - `CONTROLLER_MASTER_KEY`
+
+Compose bind variables:
+
+- `APP_HOST_BIND_IP`
+- `APP_HOST_BIND_PORT`
+- `APP_CONTAINER_PORT`
+
+Switching master/slave bind address should require changing only `.env`, not `docker-compose.yml`.
 
 Optional UI service restart controls:
 
