@@ -10,6 +10,10 @@ import (
 	"strings"
 )
 
+const (
+	placeholderSharedToken = "replace-with-controller-shared-token"
+)
+
 type MasterConfig struct {
 	BaseURL            string `json:"base_url"`
 	Port               int    `json:"port"`
@@ -113,10 +117,28 @@ func (c *Config) Normalize() error {
 	}
 	c.Master.MasterKey = strings.TrimSpace(c.Master.MasterKey)
 	c.Master.SharedToken = strings.TrimSpace(c.Master.SharedToken)
+	c.ApplyEnvOverrides()
 	if c.Slave.DefaultPort < 0 || c.Slave.DefaultPort > 65535 {
 		return fmt.Errorf("slave.default_port must be between 1 and 65535")
 	}
 	return nil
+}
+
+func (c *Config) ApplyEnvOverrides() {
+	if v := strings.TrimSpace(os.Getenv("CONTROLLER_SHARED_TOKEN")); v != "" {
+		c.Master.SharedToken = v
+	}
+	if v := strings.TrimSpace(os.Getenv("CONTROLLER_MASTER_KEY")); v != "" {
+		c.Master.MasterKey = v
+	}
+}
+
+func SecretLooksUnset(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return true
+	}
+	return strings.EqualFold(trimmed, placeholderSharedToken)
 }
 
 func applyURLPort(baseURL string, port int) (string, error) {
