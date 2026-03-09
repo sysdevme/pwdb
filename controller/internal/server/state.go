@@ -9,22 +9,23 @@ import (
 )
 
 type SlaveRegistration struct {
-	SlaveID            string    `json:"slave_id"`
-	SlaveURL           string    `json:"slave_url"`
-	ControllerID       string    `json:"controller_id"`
-	RegisteredAt       time.Time `json:"registered_at"`
-	LastSyncedVersion  int64     `json:"last_synced_version,omitempty"`
-	LastSyncedEventID  string    `json:"last_synced_event_id,omitempty"`
-	LastSyncedAt       time.Time `json:"last_synced_at,omitempty"`
-	LastSyncError      string    `json:"last_sync_error,omitempty"`
+	SlaveID           string    `json:"slave_id"`
+	SlaveURL          string    `json:"slave_url"`
+	ControllerID      string    `json:"controller_id"`
+	RegisteredAt      time.Time `json:"registered_at"`
+	LastSyncedVersion int64     `json:"last_synced_version,omitempty"`
+	LastSyncedEventID string    `json:"last_synced_event_id,omitempty"`
+	LastSyncedAt      time.Time `json:"last_synced_at,omitempty"`
+	LastSyncError     string    `json:"last_sync_error,omitempty"`
 }
 
 type ControllerState struct {
-	CurrentToken                string              `json:"current_token"`
-	TokenUpdatedAt              time.Time           `json:"token_updated_at"`
-	Slaves                      []SlaveRegistration `json:"slaves"`
-	CurrentVaultVersion         int64               `json:"current_vault_version"`
-	LastControllersFingerprint  string              `json:"last_controllers_fingerprint,omitempty"`
+	CurrentToken               string              `json:"current_token"`
+	TokenUpdatedAt             time.Time           `json:"token_updated_at"`
+	Slaves                     []SlaveRegistration `json:"slaves"`
+	CurrentVaultVersion        int64               `json:"current_vault_version"`
+	LastControllersFingerprint string              `json:"last_controllers_fingerprint,omitempty"`
+	LastVaultFingerprint       string              `json:"last_vault_fingerprint,omitempty"`
 }
 
 type StateStore struct {
@@ -94,6 +95,14 @@ func (s *StateStore) SetVersionFingerprint(version int64, fingerprint string) er
 	defer s.mu.Unlock()
 	s.data.CurrentVaultVersion = version
 	s.data.LastControllersFingerprint = fingerprint
+	return s.saveLocked()
+}
+
+func (s *StateStore) SetVaultVersionFingerprint(version int64, fingerprint string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data.CurrentVaultVersion = version
+	s.data.LastVaultFingerprint = fingerprint
 	return s.saveLocked()
 }
 

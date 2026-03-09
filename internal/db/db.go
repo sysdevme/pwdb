@@ -1637,6 +1637,135 @@ func (s *Store) CountUnreadMessages(ctx context.Context, userID string) (int, er
 	return count, nil
 }
 
+func (s *Store) UpsertUserSyncKey(ctx context.Context, userID string, serverWrappedKey []byte, masterWrappedKey []byte, fingerprint string) error {
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	if len(serverWrappedKey) == 0 || len(masterWrappedKey) == 0 || strings.TrimSpace(fingerprint) == "" {
+		return errors.New("wrapped keys and fingerprint are required")
+	}
+	_, err = s.pool.Exec(ctx, sqlUpsertUserSyncKey, userUUID, serverWrappedKey, masterWrappedKey, strings.TrimSpace(fingerprint))
+	return err
+}
+
+func (s *Store) GetUserSyncKey(ctx context.Context, userID string) ([]byte, []byte, string, error) {
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	var serverWrapped []byte
+	var masterWrapped []byte
+	var fingerprint string
+	var createdAt time.Time
+	var updatedAt time.Time
+	err = s.pool.QueryRow(ctx, sqlGetUserSyncKey, userUUID).Scan(&serverWrapped, &masterWrapped, &fingerprint, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return serverWrapped, masterWrapped, fingerprint, nil
+}
+
+func (s *Store) InsertPendingSyncBundle(ctx context.Context, bundle models.PendingSyncBundle, ciphertext []byte) (bool, error) {
+	id, err := parseOrNewUUID(bundle.ID)
+	if err != nil {
+		return false, err
+	}
+	userUUID, err := uuid.Parse(bundle.UserID)
+	if err != nil {
+		return false, err
+	}
+	if len(ciphertext) == 0 {
+		return false, errors.New("ciphertext is required")
+	}
+	tag, err := s.pool.Exec(ctx, sqlInsertPendingSyncBundle, id, userUUID, strings.TrimSpace(bundle.MasterServerID), strings.TrimSpace(bundle.MasterServerURL), strings.TrimSpace(bundle.BundleType), strings.TrimSpace(bundle.PayloadHash), ciphertext)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+func (s *Store) ListPendingSyncBundles(ctx context.Context, userID string) ([]models.PendingSyncBundle, error) {
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, sqlListPendingSyncBundles, userUUID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.PendingSyncBundle
+	for rows.Next() {
+		var item models.PendingSyncBundle
+		var id uuid.UUID
+		var uid uuid.UUID
+		var appliedAt *time.Time
+		if err := rows.Scan(&id, &uid, &item.MasterServerID, &item.MasterServerURL, &item.BundleType, &item.PayloadHash, &item.Status, &item.Error, &item.CreatedAt, &appliedAt); err != nil {
+			return nil, err
+		}
+		item.ID = id.String()
+		item.UserID = uid.String()
+		if appliedAt != nil {
+			item.AppliedAt = *appliedAt
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetPendingSyncBundleForUser(ctx context.Context, userID string, bundleID string) (models.PendingSyncBundle, []byte, error) {
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return models.PendingSyncBundle{}, nil, err
+	}
+	idUUID, err := uuid.Parse(bundleID)
+	if err != nil {
+		return models.PendingSyncBundle{}, nil, err
+	}
+	var item models.PendingSyncBundle
+	var id uuid.UUID
+	var uid uuid.UUID
+	var ciphertext []byte
+	var appliedAt *time.Time
+	err = s.pool.QueryRow(ctx, sqlGetPendingSyncBundleForUser, idUUID, userUUID).Scan(&id, &uid, &item.MasterServerID, &item.MasterServerURL, &item.BundleType, &item.PayloadHash, &ciphertext, &item.Status, &item.Error, &item.CreatedAt, &appliedAt)
+	if err != nil {
+		return models.PendingSyncBundle{}, nil, err
+	}
+	item.ID = id.String()
+	item.UserID = uid.String()
+	if appliedAt != nil {
+		item.AppliedAt = *appliedAt
+	}
+	return item, ciphertext, nil
+}
+
+func (s *Store) MarkPendingSyncBundleApplied(ctx context.Context, userID string, bundleID string) error {
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	idUUID, err := uuid.Parse(bundleID)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, sqlMarkPendingSyncBundleApplied, idUUID, userUUID)
+	return err
+}
+
+func (s *Store) MarkPendingSyncBundleFailed(ctx context.Context, userID string, bundleID string, reason string) error {
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	idUUID, err := uuid.Parse(bundleID)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, sqlMarkPendingSyncBundleFailed, idUUID, userUUID, strings.TrimSpace(reason))
+	return err
+}
+
 func (s *Store) CreatePasswordShareLink(ctx context.Context, token string, entryID string, createdBy string, expiresAt time.Time) error {
 	if strings.TrimSpace(token) == "" {
 		return errors.New("token required")

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"io"
 	"strings"
@@ -133,4 +134,99 @@ func subtleCompare(a, b []byte) bool {
 		res |= a[i] ^ b[i]
 	}
 	return res == 0
+}
+
+func GenerateRandomKey(size int) ([]byte, error) {
+	if size <= 0 {
+		return nil, errors.New("invalid key size")
+	}
+	key := make([]byte, size)
+	if _, err := io.ReadFull(rand.Reader, key); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func KeyFingerprint(key []byte) string {
+	sum := sha256.Sum256(key)
+	return hex.EncodeToString(sum[:])
+}
+
+func derivePasswordKey(password string, salt []byte) ([]byte, error) {
+	if strings.TrimSpace(password) == "" {
+		return nil, errors.New("password required")
+	}
+	if len(salt) == 0 {
+		return nil, errors.New("salt required")
+	}
+	return argon2.IDKey([]byte(password), salt, 2, 128*1024, 4, 32), nil
+}
+
+func EncryptWithKey(key []byte, plaintext []byte) ([]byte, error) {
+	if len(key) != 32 {
+		return nil, errors.New("key must be 32 bytes")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
+	return append(nonce, ciphertext...), nil
+}
+
+func DecryptWithKey(key []byte, blob []byte) ([]byte, error) {
+	if len(key) != 32 {
+		return nil, errors.New("key must be 32 bytes")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonceSize := gcm.NonceSize()
+	if len(blob) < nonceSize {
+		return nil, errors.New("invalid blob")
+	}
+	nonce := blob[:nonceSize]
+	ciphertext := blob[nonceSize:]
+	return gcm.Open(nil, nonce, ciphertext, nil)
+}
+
+func WrapKeyWithPassword(password string, key []byte) ([]byte, error) {
+	salt := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return nil, err
+	}
+	derived, err := derivePasswordKey(password, salt)
+	if err != nil {
+		return nil, err
+	}
+	wrapped, err := EncryptWithKey(derived, key)
+	if err != nil {
+		return nil, err
+	}
+	return append(salt, wrapped...), nil
+}
+
+func UnwrapKeyWithPassword(password string, blob []byte) ([]byte, error) {
+	if len(blob) < 16 {
+		return nil, errors.New("invalid wrapped key")
+	}
+	salt := blob[:16]
+	derived, err := derivePasswordKey(password, salt)
+	if err != nil {
+		return nil, err
+	}
+	return DecryptWithKey(derived, blob[16:])
 }

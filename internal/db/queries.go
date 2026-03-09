@@ -629,6 +629,58 @@ const (
 		WHERE to_user_id = $1 AND read_at IS NULL
 	`
 
+	sqlUpsertUserSyncKey = `
+		INSERT INTO user_sync_keys (user_id, server_wrapped_key, master_wrapped_key, key_fingerprint, updated_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (user_id) DO UPDATE
+		SET server_wrapped_key = EXCLUDED.server_wrapped_key,
+		    master_wrapped_key = EXCLUDED.master_wrapped_key,
+		    key_fingerprint = EXCLUDED.key_fingerprint,
+		    updated_at = NOW()
+	`
+
+	sqlGetUserSyncKey = `
+		SELECT server_wrapped_key, master_wrapped_key, key_fingerprint, created_at, updated_at
+		FROM user_sync_keys
+		WHERE user_id = $1
+	`
+
+	sqlInsertPendingSyncBundle = `
+		INSERT INTO pending_sync_bundles (
+			id, user_id, master_server_id, master_server_url, bundle_type, payload_hash, ciphertext, status
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+		ON CONFLICT (user_id, payload_hash, status) DO NOTHING
+	`
+
+	sqlListPendingSyncBundles = `
+		SELECT id, user_id, master_server_id, master_server_url, bundle_type, payload_hash, status, error, created_at, applied_at
+		FROM pending_sync_bundles
+		WHERE user_id = $1 AND status = 'pending'
+		ORDER BY created_at DESC
+	`
+
+	sqlGetPendingSyncBundleForUser = `
+		SELECT id, user_id, master_server_id, master_server_url, bundle_type, payload_hash, ciphertext, status, error, created_at, applied_at
+		FROM pending_sync_bundles
+		WHERE id = $1 AND user_id = $2
+	`
+
+	sqlMarkPendingSyncBundleApplied = `
+		UPDATE pending_sync_bundles
+		SET status = 'applied',
+		    error = NULL,
+		    applied_at = NOW()
+		WHERE id = $1 AND user_id = $2
+	`
+
+	sqlMarkPendingSyncBundleFailed = `
+		UPDATE pending_sync_bundles
+		SET status = 'failed',
+		    error = $3
+		WHERE id = $1 AND user_id = $2
+	`
+
 	sqlCreatePasswordShareLink = `
 		INSERT INTO password_share_links (token, entry_id, created_by, expires_at)
 		VALUES ($1, $2, $3, $4)

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -17,9 +18,11 @@ type fakeMaster struct {
 	pairCalls      []string
 	applyCalls     []string
 	ackCalls       []string
+	exportCalls    int
 	bootstrapToken string
 	bootstrapErr   error
 	bootstrapCalls int
+	snapshot       master.SnapshotExport
 }
 
 func (f *fakeMaster) Bootstrap(controllerID string, masterKey string) (string, error) {
@@ -45,8 +48,17 @@ func (f *fakeMaster) PairSlave(slaveID string, slaveURL string) error {
 	return nil
 }
 
+func (f *fakeMaster) ExportSnapshot() (master.SnapshotExport, error) {
+	f.exportCalls++
+	return f.snapshot, nil
+}
+
+func (f *fakeMaster) ApplySnapshotToSlave(slaveURL string, masterServerID string, masterURL string, snapshot master.SnapshotExport) error {
+	f.applyCalls = append(f.applyCalls, slaveURL)
+	return nil
+}
+
 func (f *fakeMaster) ApplyUpdateToSlave(slaveURL string, masterServerID string, eventID string, vaultVersion int64, payloadHash string) error {
-	f.applyCalls = append(f.applyCalls, eventID)
 	return nil
 }
 
@@ -89,6 +101,11 @@ func TestSyncSlavesWithMasterSuccess(t *testing.T) {
 		},
 		nextToken:  "token-2",
 		pairErrFor: map[string]error{},
+		snapshot: master.SnapshotExport{
+			SnapshotVersion: 101,
+			PayloadHash:     "payload-1",
+			Snapshot:        json.RawMessage(`{"version":101,"created_at":"2026-03-09T00:00:00Z","users":[{"id":"u1"}],"passwords":[],"notes":[],"password_shares":[],"note_shares":[]}`),
+		},
 	}
 
 	srv := New(config.Config{ControllerID: "controller-01", Master: config.MasterConfig{BaseURL: "http://10.1.12.36:8080"}}, fm, store)
@@ -108,14 +125,19 @@ func TestSyncSlavesWithMasterSuccess(t *testing.T) {
 	if st.CurrentToken != "token-2" {
 		t.Fatalf("expected rotated token token-2, got %q", st.CurrentToken)
 	}
-	if st.CurrentVaultVersion == 0 {
-		t.Fatalf("expected non-zero vault version after first sync")
+	if st.CurrentVaultVersion != 101 {
+		t.Fatalf("expected vault version 101 after first sync, got %d", st.CurrentVaultVersion)
 	}
-	if len(fm.applyCalls) != 1 || len(fm.ackCalls) != 1 {
-		t.Fatalf("expected one apply and one ack call, got apply=%d ack=%d", len(fm.applyCalls), len(fm.ackCalls))
+	if len(fm.applyCalls) != 1 || len(fm.ackCalls) != 1 || fm.exportCalls != 1 {
+		t.Fatalf("expected one export, one apply, and one ack call, got export=%d apply=%d ack=%d", fm.exportCalls, len(fm.applyCalls), len(fm.ackCalls))
 	}
 
-	// Second sync without fingerprint change should not emit a new update.
+	// Second sync with a new exported timestamp/version but identical content should not reapply.
+	fm.snapshot = master.SnapshotExport{
+		SnapshotVersion: 202,
+		PayloadHash:     "payload-2",
+		Snapshot:        json.RawMessage(`{"version":202,"created_at":"2026-03-09T00:01:00Z","users":[{"id":"u1"}],"passwords":[],"notes":[],"password_shares":[],"note_shares":[]}`),
+	}
 	res, err = srv.syncSlavesWithMaster()
 	if err != nil {
 		t.Fatalf("second syncSlavesWithMaster error: %v", err)
@@ -180,6 +202,10 @@ func TestSyncSlavesWithMasterAutoBootstrapSuccess(t *testing.T) {
 		controllers:    []master.ControllerInfo{},
 		nextToken:      "token-rotated",
 		bootstrapToken: "token-bootstrapped",
+		snapshot: master.SnapshotExport{
+			SnapshotVersion: 1,
+			Snapshot:        json.RawMessage(`{"version":1,"created_at":"2026-03-09T00:00:00Z","users":[],"passwords":[],"notes":[],"password_shares":[],"note_shares":[]}`),
+		},
 	}
 
 	srv := New(config.Config{

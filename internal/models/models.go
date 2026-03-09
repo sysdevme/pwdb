@@ -139,13 +139,33 @@ type ControllerRegistryEntry struct {
 }
 
 type InternalMessage struct {
-	ID             string
-	FromUserID     string
-	FromEmail      string
-	ToUserID       string
-	ToEmail        string
-	Body           string
-	ReadAt         time.Time
+	ID         string
+	FromUserID string
+	FromEmail  string
+	ToUserID   string
+	ToEmail    string
+	Body       string
+	ReadAt     time.Time
+	CreatedAt  time.Time
+	IsRead     bool
+}
+
+type UserSyncKey struct {
+	UserID         string
+	KeyFingerprint string
 	CreatedAt      time.Time
-	IsRead         bool
+	UpdatedAt      time.Time
+}
+
+type PendingSyncBundle struct {
+	ID              string
+	UserID          string
+	MasterServerID  string
+	MasterServerURL string
+	BundleType      string
+	PayloadHash     string
+	Status          string
+	Error           string
+	CreatedAt       time.Time
+	AppliedAt       time.Time
 }

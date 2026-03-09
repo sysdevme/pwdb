@@ -11,16 +11,18 @@ import (
 )
 
 type MasterConfig struct {
-	BaseURL         string `json:"base_url"`
-	Port            int    `json:"port"`
-	MasterKey       string `json:"master_key"`
-	BootstrapPath   string `json:"bootstrap_path"`
-	RotatePath      string `json:"rotate_path"`
-	ControllersPath string `json:"controllers_path"`
-	PairPath        string `json:"pair_path"`
-	UpdateAckPath   string `json:"update_ack_path"`
-	UpdateApplyPath string `json:"update_apply_path"`
-	SharedToken     string `json:"shared_token"`
+	BaseURL            string `json:"base_url"`
+	Port               int    `json:"port"`
+	MasterKey          string `json:"master_key"`
+	BootstrapPath      string `json:"bootstrap_path"`
+	RotatePath         string `json:"rotate_path"`
+	ControllersPath    string `json:"controllers_path"`
+	PairPath           string `json:"pair_path"`
+	SnapshotExportPath string `json:"snapshot_export_path"`
+	SnapshotApplyPath  string `json:"snapshot_apply_path"`
+	UpdateAckPath      string `json:"update_ack_path"`
+	UpdateApplyPath    string `json:"update_apply_path"`
+	SharedToken        string `json:"shared_token"`
 }
 
 type SlaveConfig struct {
@@ -96,6 +98,12 @@ func (c *Config) Normalize() error {
 	}
 	if strings.TrimSpace(c.Master.PairPath) == "" {
 		c.Master.PairPath = "/controller/pair"
+	}
+	if strings.TrimSpace(c.Master.SnapshotExportPath) == "" {
+		c.Master.SnapshotExportPath = "/controller/snapshot/export"
+	}
+	if strings.TrimSpace(c.Master.SnapshotApplyPath) == "" {
+		c.Master.SnapshotApplyPath = "/controller/snapshot/apply"
 	}
 	if strings.TrimSpace(c.Master.UpdateAckPath) == "" {
 		c.Master.UpdateAckPath = "/controller/update/ack"

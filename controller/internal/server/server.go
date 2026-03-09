@@ -24,6 +24,8 @@ type masterAPI interface {
 	Bootstrap(controllerID string, masterKey string) (string, error)
 	ListControllers(token string) ([]master.ControllerInfo, string, error)
 	PairSlave(slaveID string, slaveURL string) error
+	ExportSnapshot() (master.SnapshotExport, error)
+	ApplySnapshotToSlave(slaveURL string, masterServerID string, masterURL string, snapshot master.SnapshotExport) error
 	ApplyUpdateToSlave(slaveURL string, masterServerID string, eventID string, vaultVersion int64, payloadHash string) error
 	AckUpdate(masterServerID string, slaveID string, eventID string, statusValue string) error
 }
@@ -391,22 +393,6 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 		log.Printf("worker: failed to persist rotated token: %v", err)
 	}
 
-	fingerprint := controllersFingerprint(controllers)
-	version := st.CurrentVaultVersion
-	if version <= 0 {
-		version = 1
-	}
-	if st.LastControllersFingerprint != fingerprint {
-		version++
-		if st.CurrentVaultVersion == 0 {
-			version = 1
-		}
-		if err := s.state.SetVersionFingerprint(version, fingerprint); err != nil {
-			log.Printf("worker: failed to persist version/fingerprint: %v", err)
-		}
-		st = s.state.Snapshot()
-	}
-
 	activeControllers := make(map[string]struct{}, len(controllers))
 	controllerWeights := make(map[string]int, len(controllers))
 	for _, c := range controllers {
@@ -427,7 +413,33 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 	})
 
 	res := syncResult{}
+	snapshot, err := s.master.ExportSnapshot()
+	if err != nil {
+		s.setFailure(err)
+		return res, err
+	}
+	vaultFingerprint, err := snapshotContentFingerprint(snapshot.Snapshot)
+	if err != nil {
+		s.setFailure(err)
+		return res, err
+	}
+	if st.LastVaultFingerprint != vaultFingerprint {
+		version := snapshot.SnapshotVersion
+		if version <= 0 {
+			version = time.Now().UTC().Unix()
+			if version <= st.CurrentVaultVersion {
+				version = st.CurrentVaultVersion + 1
+			}
+		}
+		if err := s.state.SetVaultVersionFingerprint(version, vaultFingerprint); err != nil {
+			log.Printf("worker: failed to persist vault version/fingerprint: %v", err)
+		}
+		st = s.state.Snapshot()
+	}
+
 	var firstErr error
+	eventID := fmt.Sprintf("snapshot-%d", st.CurrentVaultVersion)
+	masterID := masterServerIDFromURL(s.cfg.Master.BaseURL)
 	for _, slave := range slaves {
 		res.Attempted++
 		if _, ok := activeControllers[strings.TrimSpace(slave.ControllerID)]; !ok {
@@ -450,16 +462,13 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 			continue
 		}
 
-		eventID := fmt.Sprintf("evt-%d", st.CurrentVaultVersion)
-		payloadHash := hashPayload(fingerprint + "|" + slave.SlaveID + "|" + fmt.Sprintf("%d", st.CurrentVaultVersion))
-		masterID := masterServerIDFromURL(s.cfg.Master.BaseURL)
-		if err := s.master.ApplyUpdateToSlave(slave.SlaveURL, masterID, eventID, st.CurrentVaultVersion, payloadHash); err != nil {
+		if err := s.master.ApplySnapshotToSlave(slave.SlaveURL, masterID, s.cfg.Master.BaseURL, snapshot); err != nil {
 			res.Failed++
 			if firstErr == nil {
-				firstErr = fmt.Errorf("update apply failed for slave_id=%s: %w", slave.SlaveID, err)
+				firstErr = fmt.Errorf("snapshot apply failed for slave_id=%s: %w", slave.SlaveID, err)
 			}
 			_ = s.state.MarkSlaveSyncError(slave.SlaveID, err.Error())
-			log.Printf("worker: update apply failed for slave_id=%s: %v", slave.SlaveID, err)
+			log.Printf("worker: snapshot apply failed for slave_id=%s: %v", slave.SlaveID, err)
 			continue
 		}
 		if err := s.master.AckUpdate(masterID, slave.SlaveID, eventID, "applied"); err != nil {
@@ -533,6 +542,24 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(data)
+}
+
+func snapshotContentFingerprint(snapshot json.RawMessage) (string, error) {
+	if len(snapshot) == 0 {
+		return "", nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(snapshot, &payload); err != nil {
+		return "", err
+	}
+	delete(payload, "version")
+	delete(payload, "created_at")
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(normalized)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func controllersFingerprint(controllers []master.ControllerInfo) string {

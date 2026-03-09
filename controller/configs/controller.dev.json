@@ -12,6 +12,8 @@
     "rotate_path": "/controller/auth/rotate",
     "controllers_path": "/controller/controllers",
     "pair_path": "/controller/pair",
+    "snapshot_export_path": "/controller/snapshot/export",
+    "snapshot_apply_path": "/controller/snapshot/apply",
     "update_ack_path": "/controller/update/ack",
     "update_apply_path": "/controller/update/apply",
     "shared_token": "replace-with-controller-shared-token"

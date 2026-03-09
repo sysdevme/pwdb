@@ -37,6 +37,14 @@ func (s *registerMasterStub) ApplyUpdateToSlave(slaveURL string, masterServerID 
 	return nil
 }
 
+func (s *registerMasterStub) ExportSnapshot() (master.SnapshotExport, error) {
+	return master.SnapshotExport{}, nil
+}
+
+func (s *registerMasterStub) ApplySnapshotToSlave(slaveURL string, masterServerID string, masterURL string, snapshot master.SnapshotExport) error {
+	return nil
+}
+
 func (s *registerMasterStub) AckUpdate(masterServerID string, slaveID string, eventID string, statusValue string) error {
 	return nil
 }

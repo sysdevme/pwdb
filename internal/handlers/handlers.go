@@ -86,6 +86,26 @@ type controllerUpdateAckRequest struct {
 	Status         string `json:"status"`
 }
 
+type controllerEncryptedSyncBundle struct {
+	BundleID      string `json:"bundle_id"`
+	UserID        string `json:"user_id"`
+	UserEmail     string `json:"user_email"`
+	BundleType    string `json:"bundle_type"`
+	PayloadHash   string `json:"payload_hash"`
+	CiphertextB64 string `json:"ciphertext_b64"`
+}
+
+type controllerSyncBundlesApplyRequest struct {
+	MasterServerID string                        `json:"master_server_id"`
+	MasterURL      string                        `json:"master_url"`
+	UserID         string                        `json:"user_id"`
+	Bundle         controllerEncryptedSyncBundle `json:"bundle"`
+}
+
+type controllerSyncBundleExportRequest struct {
+	UserID string `json:"user_id"`
+}
+
 type controllerSnapshotUser struct {
 	ID                 string    `json:"id"`
 	Email              string    `json:"email"`
@@ -105,6 +125,17 @@ type controllerSnapshotPayload struct {
 	Version        int64                     `json:"version"`
 	CreatedAt      time.Time                 `json:"created_at"`
 	Users          []controllerSnapshotUser  `json:"users"`
+	Passwords      []models.PasswordEntry    `json:"passwords"`
+	Notes          []models.SecureNote       `json:"notes"`
+	PasswordShares []controllerSnapshotShare `json:"password_shares"`
+	NoteShares     []controllerSnapshotShare `json:"note_shares"`
+}
+
+type controllerSyncUserBundle struct {
+	Version        int64                     `json:"version"`
+	CreatedAt      time.Time                 `json:"created_at"`
+	UserID         string                    `json:"user_id"`
+	UserEmail      string                    `json:"user_email"`
 	Passwords      []models.PasswordEntry    `json:"passwords"`
 	Notes          []models.SecureNote       `json:"notes"`
 	PasswordShares []controllerSnapshotShare `json:"password_shares"`
@@ -249,6 +280,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/controller/links/status", s.handleControllerLinksStatus)
 	mux.HandleFunc("/controller/snapshot/export", s.handleControllerSnapshotExport)
 	mux.HandleFunc("/controller/snapshot/apply", s.handleControllerSnapshotApply)
+	mux.HandleFunc("/controller/sync-bundles/export", s.handleControllerSyncBundlesExport)
+	mux.HandleFunc("/controller/sync-bundles/apply", s.handleControllerSyncBundlesApply)
 	mux.HandleFunc("/controller/update/apply", s.handleControllerUpdateApply)
 	mux.HandleFunc("/controller/update/ack", s.handleControllerUpdateAck)
 	mux.HandleFunc("/", s.handleIndex)
@@ -271,6 +304,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/messages", s.handleMessagesPage)
 	mux.HandleFunc("/messages/send", s.handleMessageSend)
 	mux.HandleFunc("/messages/read", s.handleMessageRead)
+	mux.HandleFunc("/sync/pending/confirm", s.handlePendingSyncConfirm)
 	mux.HandleFunc("/groups", s.handleGroups)
 	mux.HandleFunc("/groups/edit", s.handleGroupEdit)
 	mux.HandleFunc("/groups/remove", s.handleGroupRemove)
@@ -505,6 +539,10 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 			MasterPasswordHash: masterHash,
 			IsAdmin:            true,
 		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := s.ensureUserSyncKey(r.Context(), adminID, masterPassword); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -1010,6 +1048,199 @@ func (s *Server) applyControllerSnapshot(ctx context.Context, snapshot controlle
 	return applied, nil
 }
 
+func (s *Server) ensureUserSyncKey(ctx context.Context, userID string, masterPassword string) error {
+	if strings.TrimSpace(masterPassword) == "" {
+		return errors.New("master password is required")
+	}
+	if _, _, _, err := s.store.GetUserSyncKey(ctx, userID); err == nil {
+		return nil
+	}
+	key, err := crypto.GenerateRandomKey(32)
+	if err != nil {
+		return err
+	}
+	keyEncoded := base64.RawStdEncoding.EncodeToString(key)
+	serverWrapped, err := s.crypto.Encrypt(keyEncoded)
+	if err != nil {
+		return err
+	}
+	masterWrapped, err := crypto.WrapKeyWithPassword(masterPassword, key)
+	if err != nil {
+		return err
+	}
+	return s.store.UpsertUserSyncKey(ctx, userID, serverWrapped, masterWrapped, crypto.KeyFingerprint(key))
+}
+
+func (s *Server) rewrapUserSyncKey(ctx context.Context, userID string, masterPassword string) error {
+	if strings.TrimSpace(masterPassword) == "" {
+		return errors.New("master password is required")
+	}
+	serverWrapped, _, _, err := s.store.GetUserSyncKey(ctx, userID)
+	if err != nil {
+		return s.ensureUserSyncKey(ctx, userID, masterPassword)
+	}
+	keyEncoded, err := s.crypto.Decrypt(serverWrapped)
+	if err != nil {
+		return err
+	}
+	key, err := base64.RawStdEncoding.DecodeString(keyEncoded)
+	if err != nil {
+		return err
+	}
+	masterWrapped, err := crypto.WrapKeyWithPassword(masterPassword, key)
+	if err != nil {
+		return err
+	}
+	return s.store.UpsertUserSyncKey(ctx, userID, serverWrapped, masterWrapped, crypto.KeyFingerprint(key))
+}
+
+func (s *Server) buildUserSyncBundle(ctx context.Context, userID string) (controllerSyncUserBundle, error) {
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return controllerSyncUserBundle{}, err
+	}
+	passwordIDs, err := s.store.ListPasswordIDs(ctx, user.ID)
+	if err != nil {
+		return controllerSyncUserBundle{}, err
+	}
+	noteIDs, err := s.store.ListNoteIDs(ctx, user.ID)
+	if err != nil {
+		return controllerSyncUserBundle{}, err
+	}
+	bundle := controllerSyncUserBundle{
+		Version:        time.Now().UTC().Unix(),
+		CreatedAt:      time.Now().UTC(),
+		UserID:         user.ID,
+		UserEmail:      user.Email,
+		Passwords:      make([]models.PasswordEntry, 0, len(passwordIDs)),
+		Notes:          make([]models.SecureNote, 0, len(noteIDs)),
+		PasswordShares: []controllerSnapshotShare{},
+		NoteShares:     []controllerSnapshotShare{},
+	}
+	for _, id := range passwordIDs {
+		entry, err := s.store.GetPassword(ctx, s.crypto, id, user.ID)
+		if err != nil {
+			return controllerSyncUserBundle{}, err
+		}
+		bundle.Passwords = append(bundle.Passwords, entry)
+		shareEmails, err := s.store.ListPasswordShareEmails(ctx, entry.ID)
+		if err != nil {
+			return controllerSyncUserBundle{}, err
+		}
+		for _, email := range shareEmails {
+			bundle.PasswordShares = append(bundle.PasswordShares, controllerSnapshotShare{
+				ItemID:      entry.ID,
+				TargetEmail: strings.TrimSpace(email),
+			})
+		}
+	}
+	for _, id := range noteIDs {
+		note, err := s.store.GetNote(ctx, s.crypto, id, user.ID)
+		if err != nil {
+			return controllerSyncUserBundle{}, err
+		}
+		bundle.Notes = append(bundle.Notes, note)
+		shareEmails, err := s.store.ListNoteShareEmails(ctx, note.ID)
+		if err != nil {
+			return controllerSyncUserBundle{}, err
+		}
+		for _, email := range shareEmails {
+			bundle.NoteShares = append(bundle.NoteShares, controllerSnapshotShare{
+				ItemID:      note.ID,
+				TargetEmail: strings.TrimSpace(email),
+			})
+		}
+	}
+	return bundle, nil
+}
+
+func (s *Server) buildEncryptedUserSyncBundle(ctx context.Context, userID string) (controllerEncryptedSyncBundle, error) {
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return controllerEncryptedSyncBundle{}, err
+	}
+	serverWrapped, _, _, err := s.store.GetUserSyncKey(ctx, user.ID)
+	if err != nil {
+		return controllerEncryptedSyncBundle{}, err
+	}
+	keyEncoded, err := s.crypto.Decrypt(serverWrapped)
+	if err != nil {
+		return controllerEncryptedSyncBundle{}, err
+	}
+	key, err := base64.RawStdEncoding.DecodeString(keyEncoded)
+	if err != nil {
+		return controllerEncryptedSyncBundle{}, err
+	}
+	payload, err := s.buildUserSyncBundle(ctx, user.ID)
+	if err != nil {
+		return controllerEncryptedSyncBundle{}, err
+	}
+	serialized, err := json.Marshal(payload)
+	if err != nil {
+		return controllerEncryptedSyncBundle{}, err
+	}
+	ciphertext, err := crypto.EncryptWithKey(key, serialized)
+	if err != nil {
+		return controllerEncryptedSyncBundle{}, err
+	}
+	sum := sha256.Sum256(serialized)
+	return controllerEncryptedSyncBundle{
+		BundleID:      uuid.New().String(),
+		UserID:        user.ID,
+		UserEmail:     user.Email,
+		BundleType:    "user_snapshot",
+		PayloadHash:   hex.EncodeToString(sum[:]),
+		CiphertextB64: base64.RawStdEncoding.EncodeToString(ciphertext),
+	}, nil
+}
+
+func (s *Server) applyPendingUserSyncBundle(ctx context.Context, userID string, bundle controllerSyncUserBundle) (map[string]int, error) {
+	if strings.TrimSpace(bundle.UserID) == "" || bundle.UserID != strings.TrimSpace(userID) {
+		return nil, errors.New("bundle user mismatch")
+	}
+	applied := map[string]int{
+		"passwords":       0,
+		"notes":           0,
+		"password_shares": 0,
+		"note_shares":     0,
+	}
+	for _, entry := range bundle.Passwords {
+		entry.UserID = userID
+		if err := s.store.UpsertPassword(ctx, s.crypto, entry); err != nil {
+			return nil, err
+		}
+		applied["passwords"]++
+	}
+	for _, note := range bundle.Notes {
+		note.UserID = userID
+		if err := s.store.InsertSecureNote(ctx, s.crypto, note); err != nil {
+			return nil, err
+		}
+		applied["notes"]++
+	}
+	for _, share := range bundle.PasswordShares {
+		target, err := s.store.GetUserByEmail(ctx, strings.TrimSpace(share.TargetEmail))
+		if err != nil {
+			continue
+		}
+		if err := s.store.UpsertPasswordShareByIDs(ctx, share.ItemID, target.ID); err != nil {
+			return nil, err
+		}
+		applied["password_shares"]++
+	}
+	for _, share := range bundle.NoteShares {
+		target, err := s.store.GetUserByEmail(ctx, strings.TrimSpace(share.TargetEmail))
+		if err != nil {
+			continue
+		}
+		if err := s.store.UpsertNoteShareByIDs(ctx, share.ItemID, target.ID); err != nil {
+			return nil, err
+		}
+		applied["note_shares"]++
+	}
+	return applied, nil
+}
+
 func (s *Server) handleControllerSnapshotExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1119,6 +1350,132 @@ func (s *Server) handleControllerSnapshotApply(w http.ResponseWriter, r *http.Re
 		"sync_status":      "await_updates",
 		"snapshot_version": req.SnapshotVersion,
 		"applied":          applied,
+	})
+}
+
+func (s *Server) handleControllerSyncBundlesExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeController(w, r) {
+		return
+	}
+	profile, err := s.store.GetServerProfile(r.Context())
+	if err != nil {
+		http.Error(w, "server profile is not initialized", http.StatusConflict)
+		return
+	}
+	if profile.ServerMode != "AS-M" {
+		http.Error(w, "sync bundle export is allowed only on AS-M", http.StatusConflict)
+		return
+	}
+	var req controllerSyncBundleExportRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	req.UserID = strings.TrimSpace(req.UserID)
+	if req.UserID == "" {
+		http.Error(w, "user_id is required", http.StatusBadRequest)
+		return
+	}
+	user, err := s.store.GetUserByID(r.Context(), req.UserID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(user.Status) != "active" {
+		http.Error(w, "user is not active", http.StatusBadRequest)
+		return
+	}
+	bundle, err := s.buildEncryptedUserSyncBundle(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "sync_bundle_exported",
+		"user_id": user.ID,
+		"bundle":  bundle,
+	})
+}
+
+func (s *Server) handleControllerSyncBundlesApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeController(w, r) {
+		return
+	}
+	profile, err := s.store.GetServerProfile(r.Context())
+	if err != nil {
+		http.Error(w, "server profile is not initialized", http.StatusConflict)
+		return
+	}
+	if profile.ServerMode != "AS-S" {
+		http.Error(w, "sync bundle apply is allowed only on AS-S", http.StatusConflict)
+		return
+	}
+	var req controllerSyncBundlesApplyRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	inserted := 0
+	skipped := 0
+	req.UserID = strings.TrimSpace(req.UserID)
+	if req.UserID == "" {
+		req.UserID = strings.TrimSpace(req.Bundle.UserID)
+	}
+	if req.UserID == "" || strings.TrimSpace(req.Bundle.PayloadHash) == "" || strings.TrimSpace(req.Bundle.CiphertextB64) == "" {
+		http.Error(w, "user_id, bundle.payload_hash, and bundle.ciphertext_b64 are required", http.StatusBadRequest)
+		return
+	}
+	if req.UserID != strings.TrimSpace(req.Bundle.UserID) {
+		http.Error(w, "bundle user mismatch", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.store.GetUserByID(r.Context(), req.UserID); err != nil {
+		http.Error(w, "target user not found on slave", http.StatusBadRequest)
+		return
+	}
+	ciphertext, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(req.Bundle.CiphertextB64))
+	if err != nil {
+		http.Error(w, "invalid bundle ciphertext", http.StatusBadRequest)
+		return
+	}
+	ok, err := s.store.InsertPendingSyncBundle(r.Context(), models.PendingSyncBundle{
+		ID:              req.Bundle.BundleID,
+		UserID:          req.UserID,
+		MasterServerID:  req.MasterServerID,
+		MasterServerURL: req.MasterURL,
+		BundleType:      req.Bundle.BundleType,
+		PayloadHash:     req.Bundle.PayloadHash,
+	}, ciphertext)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if ok {
+		inserted++
+	} else {
+		skipped++
+	}
+	if err := s.store.SetServerProfile(r.Context(), models.ServerProfile{
+		ServerMode:      profile.ServerMode,
+		SyncStatus:      "await_updates",
+		LinkedMasterID:  strings.TrimSpace(req.MasterServerID),
+		LinkedMasterURL: strings.TrimSpace(req.MasterURL),
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":   "sync_bundles_pending_confirmation",
+		"inserted": inserted,
+		"skipped":  skipped,
 	})
 }
 
@@ -2248,21 +2605,28 @@ func (s *Server) handleMessagesPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	pendingSyncs, err := s.store.ListPendingSyncBundles(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	targets, err := s.store.ListActiveUsersExcept(r.Context(), user.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.renderWithUnlock(w, r, "messages.html", map[string]any{
-		"Title":    "Messages",
-		"Message":  message,
-		"Inbox":    inbox,
-		"Sent":     sent,
-		"Targets":  targets,
-		"Locked":   !s.isUnlocked(r),
-		"BodyMax":  300,
-		"InboxLen": len(inbox),
-		"SentLen":  len(sent),
+		"Title":          "Messages",
+		"Message":        message,
+		"Inbox":          inbox,
+		"Sent":           sent,
+		"PendingSyncs":   pendingSyncs,
+		"Targets":        targets,
+		"Locked":         !s.isUnlocked(r),
+		"BodyMax":        300,
+		"InboxLen":       len(inbox),
+		"SentLen":        len(sent),
+		"PendingSyncLen": len(pendingSyncs),
 	})
 }
 
@@ -2318,6 +2682,73 @@ func (s *Server) handleMessageRead(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.MarkMessageRead(r.Context(), user.ID, messageID)
 	http.Redirect(w, r, "/messages", http.StatusSeeOther)
+}
+
+func (s *Server) handlePendingSyncConfirm(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	bundleID := strings.TrimSpace(r.FormValue("bundle_id"))
+	masterPassword := r.FormValue("master_password")
+	if bundleID == "" || strings.TrimSpace(masterPassword) == "" {
+		http.Redirect(w, r, "/messages?msg="+url.QueryEscape("Bundle ID and master password are required."), http.StatusSeeOther)
+		return
+	}
+	if !crypto.VerifyPassword(masterPassword, user.MasterPasswordHash) {
+		http.Redirect(w, r, "/messages?msg="+url.QueryEscape("Master password is invalid."), http.StatusSeeOther)
+		return
+	}
+	if err := s.ensureUserSyncKey(r.Context(), user.ID, masterPassword); err != nil {
+		http.Redirect(w, r, "/messages?msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	_, masterWrapped, _, err := s.store.GetUserSyncKey(r.Context(), user.ID)
+	if err != nil {
+		http.Redirect(w, r, "/messages?msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	key, err := crypto.UnwrapKeyWithPassword(masterPassword, masterWrapped)
+	if err != nil {
+		http.Redirect(w, r, "/messages?msg="+url.QueryEscape("Failed to unlock sync key."), http.StatusSeeOther)
+		return
+	}
+	_, ciphertext, err := s.store.GetPendingSyncBundleForUser(r.Context(), user.ID, bundleID)
+	if err != nil {
+		http.Redirect(w, r, "/messages?msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	plaintext, err := crypto.DecryptWithKey(key, ciphertext)
+	if err != nil {
+		_ = s.store.MarkPendingSyncBundleFailed(r.Context(), user.ID, bundleID, "decrypt failed")
+		http.Redirect(w, r, "/messages?msg="+url.QueryEscape("Failed to decrypt sync bundle."), http.StatusSeeOther)
+		return
+	}
+	var bundle controllerSyncUserBundle
+	if err := json.Unmarshal(plaintext, &bundle); err != nil {
+		_ = s.store.MarkPendingSyncBundleFailed(r.Context(), user.ID, bundleID, "invalid bundle payload")
+		http.Redirect(w, r, "/messages?msg="+url.QueryEscape("Invalid sync bundle payload."), http.StatusSeeOther)
+		return
+	}
+	if _, err := s.applyPendingUserSyncBundle(r.Context(), user.ID, bundle); err != nil {
+		_ = s.store.MarkPendingSyncBundleFailed(r.Context(), user.ID, bundleID, err.Error())
+		http.Redirect(w, r, "/messages?msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	if err := s.store.MarkPendingSyncBundleApplied(r.Context(), user.ID, bundleID); err != nil {
+		http.Redirect(w, r, "/messages?msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/messages?msg="+url.QueryEscape("Sync bundle applied."), http.StatusSeeOther)
 }
 
 func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
@@ -2407,6 +2838,12 @@ func (s *Server) handleAccountUpdate(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpdateUserCredentials(r.Context(), user.ID, loginHash, masterHash); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if strings.TrimSpace(newMaster) != "" {
+		if err := s.rewrapUserSyncKey(r.Context(), user.ID, newMaster); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	updatedUser, err := s.store.GetUserByID(r.Context(), user.ID)
 	if err != nil {
@@ -2607,6 +3044,10 @@ func (s *Server) handleBiometricUnlock(w http.ResponseWriter, r *http.Request) {
 		master := r.FormValue("master_password")
 		if !crypto.VerifyPassword(master, user.MasterPasswordHash) {
 			http.Error(w, "master password is invalid", http.StatusUnauthorized)
+			return
+		}
+		if err := s.ensureUserSyncKey(r.Context(), user.ID, master); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -3381,6 +3822,15 @@ func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	createdUser, err := s.store.GetUserByEmail(r.Context(), email)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := s.ensureUserSyncKey(r.Context(), createdUser.ID, masterPassword); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.renderAdminUsersCreatePage(w, r, "User created.")
 }
 
@@ -3428,6 +3878,10 @@ func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.UpdateUserCredentials(r.Context(), targetID, &loginHash, &masterHash); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := s.rewrapUserSyncKey(r.Context(), targetID, masterPassword); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

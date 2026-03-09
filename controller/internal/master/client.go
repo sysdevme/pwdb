@@ -19,28 +19,32 @@ type ControllerInfo struct {
 }
 
 type Client struct {
-	baseURL         string
-	bootstrap       string
-	rotate          string
-	listPath        string
-	pairPath        string
-	updateAckPath   string
-	updateApplyPath string
-	sharedToken     string
-	http            *http.Client
+	baseURL            string
+	bootstrap          string
+	rotate             string
+	listPath           string
+	pairPath           string
+	snapshotExportPath string
+	snapshotApplyPath  string
+	updateAckPath      string
+	updateApplyPath    string
+	sharedToken        string
+	http               *http.Client
 }
 
-func New(baseURL string, timeout time.Duration, bootstrapPath string, rotatePath string, listPath string, pairPath string, updateAckPath string, updateApplyPath string, sharedToken string) *Client {
+func New(baseURL string, timeout time.Duration, bootstrapPath string, rotatePath string, listPath string, pairPath string, snapshotExportPath string, snapshotApplyPath string, updateAckPath string, updateApplyPath string, sharedToken string) *Client {
 	return &Client{
-		baseURL:         strings.TrimRight(baseURL, "/"),
-		bootstrap:       bootstrapPath,
-		rotate:          rotatePath,
-		listPath:        listPath,
-		pairPath:        pairPath,
-		updateAckPath:   updateAckPath,
-		updateApplyPath: updateApplyPath,
-		sharedToken:     strings.TrimSpace(sharedToken),
-		http:            &http.Client{Timeout: timeout},
+		baseURL:            strings.TrimRight(baseURL, "/"),
+		bootstrap:          bootstrapPath,
+		rotate:             rotatePath,
+		listPath:           listPath,
+		pairPath:           pairPath,
+		snapshotExportPath: snapshotExportPath,
+		snapshotApplyPath:  snapshotApplyPath,
+		updateAckPath:      updateAckPath,
+		updateApplyPath:    updateApplyPath,
+		sharedToken:        strings.TrimSpace(sharedToken),
+		http:               &http.Client{Timeout: timeout},
 	}
 }
 
@@ -172,6 +176,74 @@ type updateApplyReq struct {
 	PayloadHash    string `json:"payload_hash"`
 }
 
+type SnapshotExport struct {
+	SnapshotVersion int64           `json:"snapshot_version"`
+	PayloadHash     string          `json:"payload_hash"`
+	Snapshot        json.RawMessage `json:"snapshot"`
+}
+
+type snapshotExportResp struct {
+	Status          string          `json:"status"`
+	SnapshotVersion int64           `json:"snapshot_version"`
+	PayloadHash     string          `json:"payload_hash"`
+	Snapshot        json.RawMessage `json:"snapshot"`
+}
+
+func (c *Client) ExportSnapshot() (SnapshotExport, error) {
+	if c.sharedToken == "" {
+		return SnapshotExport{}, fmt.Errorf("master.shared_token is required for snapshot export")
+	}
+	respBody, status, err := c.getWithControllerToken(c.snapshotExportPath, c.sharedToken)
+	if err != nil {
+		return SnapshotExport{}, err
+	}
+	if status != http.StatusOK {
+		return SnapshotExport{}, fmt.Errorf("snapshot export failed: status=%d body=%s", status, strings.TrimSpace(string(respBody)))
+	}
+	var resp snapshotExportResp
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return SnapshotExport{}, err
+	}
+	return SnapshotExport{
+		SnapshotVersion: resp.SnapshotVersion,
+		PayloadHash:     strings.TrimSpace(resp.PayloadHash),
+		Snapshot:        resp.Snapshot,
+	}, nil
+}
+
+type snapshotApplyReq struct {
+	MasterServerID  string          `json:"master_server_id"`
+	MasterURL       string          `json:"master_url"`
+	SnapshotVersion int64           `json:"snapshot_version"`
+	PayloadHash     string          `json:"payload_hash"`
+	Snapshot        json.RawMessage `json:"snapshot"`
+}
+
+func (c *Client) ApplySnapshotToSlave(slaveURL string, masterServerID string, masterURL string, snapshot SnapshotExport) error {
+	if c.sharedToken == "" {
+		return fmt.Errorf("master.shared_token is required for slave snapshot relay")
+	}
+	base := strings.TrimRight(strings.TrimSpace(slaveURL), "/")
+	if base == "" {
+		return fmt.Errorf("slave_url is required")
+	}
+	payload := snapshotApplyReq{
+		MasterServerID:  strings.TrimSpace(masterServerID),
+		MasterURL:       strings.TrimSpace(masterURL),
+		SnapshotVersion: snapshot.SnapshotVersion,
+		PayloadHash:     strings.TrimSpace(snapshot.PayloadHash),
+		Snapshot:        snapshot.Snapshot,
+	}
+	respBody, status, err := c.postJSONWithControllerTokenToBase(base, c.snapshotApplyPath, payload, c.sharedToken)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("snapshot apply failed: status=%d body=%s", status, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
 func (c *Client) ApplyUpdateToSlave(slaveURL string, masterServerID string, eventID string, vaultVersion int64, payloadHash string) error {
 	if c.sharedToken == "" {
 		return fmt.Errorf("master.shared_token is required for slave update relay")
@@ -283,6 +355,24 @@ func (c *Client) get(path string, token string) ([]byte, int, error) {
 	if strings.TrimSpace(token) != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, err
+	}
+	return body, resp.StatusCode, nil
+}
+
+func (c *Client) getWithControllerToken(path string, controllerToken string) ([]byte, int, error) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("X-Controller-Token", strings.TrimSpace(controllerToken))
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, 0, err

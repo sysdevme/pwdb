@@ -32,6 +32,8 @@ func main() {
 		cfg.Master.RotatePath,
 		cfg.Master.ControllersPath,
 		cfg.Master.PairPath,
+		cfg.Master.SnapshotExportPath,
+		cfg.Master.SnapshotApplyPath,
 		cfg.Master.UpdateAckPath,
 		cfg.Master.UpdateApplyPath,
 		cfg.Master.SharedToken,
