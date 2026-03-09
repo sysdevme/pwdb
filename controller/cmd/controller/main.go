@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"pwdb-controller/internal/config"
@@ -23,7 +20,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("config load: %v", err)
 	}
-	if err := resolveSecrets(&cfg); err != nil {
+	if err := validateSecrets(cfg); err != nil {
 		log.Fatalf("config secrets: %v", err)
 	}
 
@@ -56,37 +53,9 @@ func main() {
 	}
 }
 
-func resolveSecrets(cfg *config.Config) error {
-	if !config.SecretLooksUnset(cfg.Master.SharedToken) {
-		return nil
-	}
-	if !stdinIsTTY() {
-		return fmt.Errorf("controller shared token is required; set CONTROLLER_SHARED_TOKEN or update the config file")
-	}
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Fprint(os.Stdout, "Controller shared token: ")
-	sharedToken, err := reader.ReadString('\n')
-	if err != nil {
-		return err
-	}
-	cfg.Master.SharedToken = strings.TrimSpace(sharedToken)
+func validateSecrets(cfg config.Config) error {
 	if config.SecretLooksUnset(cfg.Master.SharedToken) {
-		return fmt.Errorf("controller shared token is required")
-	}
-	if config.SecretLooksUnset(cfg.Master.MasterKey) {
-		fmt.Fprint(os.Stdout, "Controller master key (optional, press Enter to skip): ")
-		masterKey, err := reader.ReadString('\n')
-		if err == nil {
-			cfg.Master.MasterKey = strings.TrimSpace(masterKey)
-		}
+		return fmt.Errorf("controller shared token is required; set CONTROLLER_SHARED_TOKEN or update a local config file")
 	}
 	return nil
-}
-
-func stdinIsTTY() bool {
-	info, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return (info.Mode() & os.ModeCharDevice) != 0
 }

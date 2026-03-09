@@ -13,8 +13,8 @@ Experimental controller service for the PWDB v4 topology, now embedded in this r
 - Persists local runtime state (`token`, registered slaves) to JSON file.
 - Runs a background sync loop (goroutine) that periodically refreshes controller list/token and re-relays pair for registered slaves.
 - Uses retry backoff in worker loop and exposes last sync status in `/health`.
-- Automatically sends update events to active slaves (`/controller/update/apply`) and sends ACK back to master (`/controller/update/ack`).
-  - Event ID format is global-per-version: `evt-<vault_version>`.
+- Exports master snapshot data and applies it to active slaves (`/controller/snapshot/apply`), then sends ACK back to master (`/controller/update/ack`).
+- Prioritizes slaves bound to higher-weight controllers first.
 
 ## Config
 
@@ -33,9 +33,10 @@ Important fields:
 - `master.rotate_path`: endpoint for token rotation
 - `master.controllers_path`: endpoint that returns available controllers + next token
 - `master.pair_path`: endpoint that registers slave link on master
-- `master.update_apply_path`: path used when sending update events to each slave
+- `master.snapshot_export_path`: endpoint used to export snapshot data from master
+- `master.snapshot_apply_path`: path used when sending snapshot data to each slave
 - `master.update_ack_path`: endpoint on master for update ACK
-- `master.shared_token`: shared token sent as `X-Controller-Token` for pair/apply/ack controller calls
+- `master.shared_token`: local fallback only; prefer `CONTROLLER_SHARED_TOKEN` from environment for pair/snapshot/ack controller calls
 
 ## Run
 
@@ -50,8 +51,16 @@ Linux/macOS (bash):
 
 ```bash
 cd /opt/pwdb-main/controller
+CONTROLLER_SHARED_TOKEN="<CONTROLLER_SHARED_TOKEN>" \
+CONTROLLER_MASTER_KEY="<CONTROLLER_MASTER_KEY>" \
 go run ./cmd/controller -config configs/controller.dev.json
 ```
+
+Environment overrides:
+
+- `CONTROLLER_SHARED_TOKEN` overrides `master.shared_token`
+- `CONTROLLER_MASTER_KEY` overrides `master.master_key`
+- If the shared token is missing or still a placeholder, controller startup fails fast with a clear error
 
 ## API (controller local)
 
@@ -123,7 +132,7 @@ Returns sync counters including `updates_sent`.
 
 - This is a first scaffold and is intentionally minimal.
 - It assumes master endpoints return `next_token` on auth/list calls.
-- Slave registration requires `master.shared_token` in config.
+- Slave registration and sync require a valid controller shared token from environment or another local-only secret source.
 - No TLS/mTLS yet, no distributed coordination yet.
-- Current change trigger is heuristic: controller computes a fingerprint from master controller registry state and emits a new version when fingerprint changes.
-- Sync processing prioritizes slaves bound to higher-weight controllers first.
+- Current sync path sends snapshot data, not true per-record delta events.
+- Deletes and full convergence cleanup are still not implemented.

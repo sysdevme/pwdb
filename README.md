@@ -161,7 +161,7 @@ Current protocol endpoints:
 Embedded controller status (`controller/`):
 
 - Background worker loop with retry backoff
-- Pair relay + automatic slave update apply + master ACK relay
+- Pair relay + automatic slave snapshot apply + master ACK relay
 - Local persisted sync metadata per slave (`last_synced_version`, `last_synced_event_id`, `last_sync_error`)
 - Manual controller endpoints:
   - `POST /v1/slaves/sync`
@@ -180,8 +180,13 @@ Linux/macOS (bash):
 
 ```bash
 cd /opt/pwdb-main/controller
+CONTROLLER_SHARED_TOKEN="<CONTROLLER_SHARED_TOKEN>" \
+CONTROLLER_MASTER_KEY="<CONTROLLER_MASTER_KEY>" \
 go run ./cmd/controller -config configs/controller.dev.json
 ```
+
+`CONTROLLER_SHARED_TOKEN` should be supplied from environment or another local-only secret source.
+Do not keep real controller secrets in tracked config files.
 
 Bootstrap controller against master:
 
