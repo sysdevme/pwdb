@@ -77,7 +77,10 @@ Login:
 Goal:
 
 - Keep only SSH and WireGuard reachable from the public internet
-- Keep PWDB web UI (`8080/tcp`) reachable only over VPN (`wg0`)
+- Keep PWDB web UI reachable only over VPN (`wg0`)
+
+This example assumes the app is bound on host port `80`.
+If you choose a different `APP_HOST_BIND_PORT`, replace `80` below with your actual host bind port.
 
 Example commands (Ubuntu/Debian with UFW):
 
@@ -87,10 +90,10 @@ sudo ufw allow 22/tcp comment 'SSH'
 sudo ufw allow 51820/udp comment 'WireGuard'
 
 # Allow app port only on WireGuard interface
-sudo ufw allow in on wg0 to any port 8080 proto tcp
+sudo ufw allow in on wg0 to any port 80 proto tcp
 
 # Block app port on all other interfaces
-sudo ufw deny in to any port 8080 proto tcp
+sudo ufw deny in to any port 80 proto tcp
 
 # Default policy
 sudo ufw default deny incoming
@@ -104,8 +107,8 @@ sudo ufw status numbered
 
 Expected behavior:
 
-- `http://<public-ip>:8080/login` -> blocked
-- `http://10.8.0.1:8080/login` (over WireGuard VPN) -> allowed
+- `http://<public-ip>:80/login` -> blocked
+- `http://10.8.0.1:80/login` (over WireGuard VPN) -> allowed
 
 WireGuard note:
 
@@ -179,13 +182,17 @@ Current protocol endpoints:
   - `POST /controller/pair`
   - `POST /controller/update/ack`
   - `GET /controller/controllers` returns controllers ordered by `weight DESC`
+  - `POST /controller/sync-bundles/export` exports one encrypted per-user sync bundle from `AS-M`
 - Controller -> Slave:
   - `POST /controller/snapshot/apply`
+  - `POST /controller/sync-bundles/apply` stores one encrypted per-user sync bundle as pending confirmation on `AS-S`
   - `POST /controller/update/apply`
 - Master -> Slave:
   - `GET /controller/health`
 - Controller -> Master (status query):
   - `GET /controller/links/status`
+- User -> Slave:
+  - `POST /sync/pending/confirm` decrypts and applies a pending per-user sync bundle after master-password confirmation
 
 Embedded controller status (`controller/`):
 
@@ -202,6 +209,8 @@ Windows (PowerShell):
 
 ```powershell
 cd E:\pwdb-main\controller
+$env:CONTROLLER_SHARED_TOKEN = "<CONTROLLER_SHARED_TOKEN>"
+$env:CONTROLLER_MASTER_KEY = "<CONTROLLER_MASTER_KEY>"
 go run ./cmd/controller -config configs/controller.dev.json
 ```
 
