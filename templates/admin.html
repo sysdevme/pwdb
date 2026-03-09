@@ -258,6 +258,8 @@
           <thead>
             <tr>
               <th>Event ID</th>
+              <th>Type</th>
+              <th>Details</th>
               <th>Master ID</th>
               <th>Vault Version</th>
               <th>Status</th>
@@ -268,6 +270,8 @@
             {{ range .ControllerUpdateEvents }}
             <tr>
               <td><code>{{ .EventID }}</code></td>
+              <td><span class="badge text-bg-secondary">{{ .EventType }}</span></td>
+              <td class="small text-muted">{{ .EventDetails }}</td>
               <td><code>{{ .MasterServerID }}</code></td>
               <td>{{ .VaultVersion }}</td>
               <td>
@@ -291,6 +295,8 @@
               <thead>
                 <tr>
                   <th>Event ID</th>
+                  <th>Type</th>
+                  <th>Details</th>
                   <th>Master ID</th>
                   <th>Vault Version</th>
                   <th>Status</th>
@@ -301,6 +307,8 @@
                 {{ range .ControllerUpdateEventsRaw }}
                 <tr>
                   <td><code>{{ .EventID }}</code></td>
+                  <td><span class="badge text-bg-secondary">{{ .EventType }}</span></td>
+                  <td class="small text-muted">{{ .EventDetails }}</td>
                   <td><code>{{ .MasterServerID }}</code></td>
                   <td>{{ .VaultVersion }}</td>
                   <td>

@@ -65,9 +65,11 @@ type controllerPairRequest struct {
 }
 
 type controllerSnapshotApplyRequest struct {
-	MasterServerID  string `json:"master_server_id"`
-	MasterURL       string `json:"master_url"`
-	SnapshotVersion int64  `json:"snapshot_version"`
+	MasterServerID  string                    `json:"master_server_id"`
+	MasterURL       string                    `json:"master_url"`
+	SnapshotVersion int64                     `json:"snapshot_version"`
+	PayloadHash     string                    `json:"payload_hash"`
+	Snapshot        controllerSnapshotPayload `json:"snapshot"`
 }
 
 type controllerUpdateApplyRequest struct {
@@ -82,6 +84,31 @@ type controllerUpdateAckRequest struct {
 	SlaveServerID  string `json:"slave_server_id"`
 	EventID        string `json:"event_id"`
 	Status         string `json:"status"`
+}
+
+type controllerSnapshotUser struct {
+	ID                 string    `json:"id"`
+	Email              string    `json:"email"`
+	Status             string    `json:"status"`
+	PasswordHash       string    `json:"password_hash"`
+	MasterPasswordHash string    `json:"master_password_hash"`
+	IsAdmin            bool      `json:"is_admin"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+type controllerSnapshotShare struct {
+	ItemID      string `json:"item_id"`
+	TargetEmail string `json:"target_email"`
+}
+
+type controllerSnapshotPayload struct {
+	Version        int64                     `json:"version"`
+	CreatedAt      time.Time                 `json:"created_at"`
+	Users          []controllerSnapshotUser  `json:"users"`
+	Passwords      []models.PasswordEntry    `json:"passwords"`
+	Notes          []models.SecureNote       `json:"notes"`
+	PasswordShares []controllerSnapshotShare `json:"password_shares"`
+	NoteShares     []controllerSnapshotShare `json:"note_shares"`
 }
 
 type controllerBootstrapAuthRequest struct {
@@ -220,6 +247,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/controller/health", s.handleControllerHealth)
 	mux.HandleFunc("/controller/pair", s.handleControllerPair)
 	mux.HandleFunc("/controller/links/status", s.handleControllerLinksStatus)
+	mux.HandleFunc("/controller/snapshot/export", s.handleControllerSnapshotExport)
 	mux.HandleFunc("/controller/snapshot/apply", s.handleControllerSnapshotApply)
 	mux.HandleFunc("/controller/update/apply", s.handleControllerUpdateApply)
 	mux.HandleFunc("/controller/update/ack", s.handleControllerUpdateAck)
@@ -843,6 +871,180 @@ func (s *Server) runControllerLinkHealthcheck() {
 	}
 }
 
+func snapshotHash(payload controllerSnapshotPayload) (string, error) {
+	serialized, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(serialized)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func (s *Server) buildControllerSnapshot(ctx context.Context) (controllerSnapshotPayload, error) {
+	users, err := s.store.ListUsers(ctx)
+	if err != nil {
+		return controllerSnapshotPayload{}, err
+	}
+	snapshot := controllerSnapshotPayload{
+		Version:        time.Now().UTC().Unix(),
+		CreatedAt:      time.Now().UTC(),
+		Users:          make([]controllerSnapshotUser, 0, len(users)),
+		Passwords:      []models.PasswordEntry{},
+		Notes:          []models.SecureNote{},
+		PasswordShares: []controllerSnapshotShare{},
+		NoteShares:     []controllerSnapshotShare{},
+	}
+	for _, user := range users {
+		fullUser, err := s.store.GetUserByID(ctx, user.ID)
+		if err != nil {
+			return controllerSnapshotPayload{}, err
+		}
+		snapshot.Users = append(snapshot.Users, controllerSnapshotUser{
+			ID:                 fullUser.ID,
+			Email:              fullUser.Email,
+			Status:             fullUser.Status,
+			PasswordHash:       fullUser.PasswordHash,
+			MasterPasswordHash: fullUser.MasterPasswordHash,
+			IsAdmin:            fullUser.IsAdmin,
+			CreatedAt:          fullUser.CreatedAt,
+		})
+		pwIDs, err := s.store.ListPasswordIDs(ctx, fullUser.ID)
+		if err != nil {
+			return controllerSnapshotPayload{}, err
+		}
+		for _, id := range pwIDs {
+			entry, err := s.store.GetPassword(ctx, s.crypto, id, fullUser.ID)
+			if err != nil {
+				return controllerSnapshotPayload{}, err
+			}
+			snapshot.Passwords = append(snapshot.Passwords, entry)
+			shareEmails, err := s.store.ListPasswordShareEmails(ctx, entry.ID)
+			if err != nil {
+				return controllerSnapshotPayload{}, err
+			}
+			for _, email := range shareEmails {
+				snapshot.PasswordShares = append(snapshot.PasswordShares, controllerSnapshotShare{
+					ItemID:      entry.ID,
+					TargetEmail: strings.TrimSpace(email),
+				})
+			}
+		}
+		noteIDs, err := s.store.ListNoteIDs(ctx, fullUser.ID)
+		if err != nil {
+			return controllerSnapshotPayload{}, err
+		}
+		for _, id := range noteIDs {
+			note, err := s.store.GetNote(ctx, s.crypto, id, fullUser.ID)
+			if err != nil {
+				return controllerSnapshotPayload{}, err
+			}
+			snapshot.Notes = append(snapshot.Notes, note)
+			shareEmails, err := s.store.ListNoteShareEmails(ctx, note.ID)
+			if err != nil {
+				return controllerSnapshotPayload{}, err
+			}
+			for _, email := range shareEmails {
+				snapshot.NoteShares = append(snapshot.NoteShares, controllerSnapshotShare{
+					ItemID:      note.ID,
+					TargetEmail: strings.TrimSpace(email),
+				})
+			}
+		}
+	}
+	return snapshot, nil
+}
+
+func (s *Server) applyControllerSnapshot(ctx context.Context, snapshot controllerSnapshotPayload) (map[string]int, error) {
+	applied := map[string]int{
+		"users":           0,
+		"passwords":       0,
+		"notes":           0,
+		"password_shares": 0,
+		"note_shares":     0,
+	}
+	for _, user := range snapshot.Users {
+		if err := s.store.UpsertUserReplica(ctx, models.User{
+			ID:                 user.ID,
+			Email:              user.Email,
+			Status:             user.Status,
+			PasswordHash:       user.PasswordHash,
+			MasterPasswordHash: user.MasterPasswordHash,
+			IsAdmin:            user.IsAdmin,
+		}); err != nil {
+			return nil, err
+		}
+		applied["users"]++
+	}
+	for _, entry := range snapshot.Passwords {
+		if err := s.store.UpsertPassword(ctx, s.crypto, entry); err != nil {
+			return nil, err
+		}
+		applied["passwords"]++
+	}
+	for _, note := range snapshot.Notes {
+		if err := s.store.InsertSecureNote(ctx, s.crypto, note); err != nil {
+			return nil, err
+		}
+		applied["notes"]++
+	}
+	for _, share := range snapshot.PasswordShares {
+		target, err := s.store.GetUserByEmail(ctx, strings.TrimSpace(share.TargetEmail))
+		if err != nil {
+			continue
+		}
+		if err := s.store.UpsertPasswordShareByIDs(ctx, share.ItemID, target.ID); err != nil {
+			return nil, err
+		}
+		applied["password_shares"]++
+	}
+	for _, share := range snapshot.NoteShares {
+		target, err := s.store.GetUserByEmail(ctx, strings.TrimSpace(share.TargetEmail))
+		if err != nil {
+			continue
+		}
+		if err := s.store.UpsertNoteShareByIDs(ctx, share.ItemID, target.ID); err != nil {
+			return nil, err
+		}
+		applied["note_shares"]++
+	}
+	return applied, nil
+}
+
+func (s *Server) handleControllerSnapshotExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeController(w, r) {
+		return
+	}
+	profile, err := s.store.GetServerProfile(r.Context())
+	if err != nil {
+		http.Error(w, "server profile is not initialized", http.StatusConflict)
+		return
+	}
+	if profile.ServerMode != "AS-M" {
+		http.Error(w, "snapshot export is allowed only on AS-M", http.StatusConflict)
+		return
+	}
+	snapshot, err := s.buildControllerSnapshot(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	hash, err := snapshotHash(snapshot)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":           "snapshot_exported",
+		"snapshot_version": snapshot.Version,
+		"payload_hash":     hash,
+		"snapshot":         snapshot,
+	})
+}
+
 func (s *Server) handleControllerSnapshotApply(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -869,6 +1071,31 @@ func (s *Server) handleControllerSnapshotApply(w http.ResponseWriter, r *http.Re
 		http.Error(w, "master_url and snapshot_version are required", http.StatusBadRequest)
 		return
 	}
+	applied := map[string]int{}
+	if len(req.Snapshot.Users)+len(req.Snapshot.Passwords)+len(req.Snapshot.Notes) > 0 {
+		if req.Snapshot.Version > 0 && req.Snapshot.Version != req.SnapshotVersion {
+			http.Error(w, "snapshot version mismatch", http.StatusBadRequest)
+			return
+		}
+		expectedHash := strings.TrimSpace(req.PayloadHash)
+		if expectedHash != "" {
+			calculatedHash, err := snapshotHash(req.Snapshot)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if !strings.EqualFold(expectedHash, calculatedHash) {
+				http.Error(w, "invalid snapshot hash", http.StatusBadRequest)
+				return
+			}
+		}
+		var err error
+		applied, err = s.applyControllerSnapshot(r.Context(), req.Snapshot)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	if err := s.store.SetServerProfile(r.Context(), models.ServerProfile{
 		ServerMode:      profile.ServerMode,
 		SyncStatus:      "await_updates",
@@ -878,10 +1105,20 @@ func (s *Server) handleControllerSnapshotApply(w http.ResponseWriter, r *http.Re
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	eventID := fmt.Sprintf("snapshot-%d", req.SnapshotVersion)
+	_, _ = s.store.InsertControllerUpdateEvent(
+		r.Context(),
+		eventID,
+		strings.TrimSpace(req.MasterServerID),
+		req.SnapshotVersion,
+		strings.TrimSpace(req.PayloadHash),
+		"applied",
+	)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":           "snapshot_applied",
 		"sync_status":      "await_updates",
 		"snapshot_version": req.SnapshotVersion,
+		"applied":          applied,
 	})
 }
 
@@ -2747,6 +2984,16 @@ type adminControllerRegistryView struct {
 	UpdatedAtAbs   string
 }
 
+type adminControllerUpdateEventView struct {
+	EventID        string
+	MasterServerID string
+	VaultVersion   int64
+	Status         string
+	CreatedAt      time.Time
+	EventType      string
+	EventDetails   string
+}
+
 type adminRemoteMasterLinkStatus struct {
 	Reachable         bool
 	Error             string
@@ -2797,6 +3044,21 @@ func classifyControllerLinkHealth(status string, lastHandshakeAt time.Time, now 
 		return "stale"
 	}
 	return "active"
+}
+
+func classifyControllerEvent(event models.ControllerUpdateEvent) (string, string) {
+	eventID := strings.TrimSpace(strings.ToLower(event.EventID))
+	switch {
+	case strings.HasPrefix(eventID, "snapshot-"):
+		return "snapshot", "full snapshot apply"
+	case strings.HasPrefix(eventID, "evt-"):
+		return "sync-event", "controller sync marker"
+	default:
+		if strings.TrimSpace(event.PayloadHash) != "" {
+			return "sync-event", "payload hash present"
+		}
+		return "unknown", "event type not classified"
+	}
 }
 
 func (s *Server) fetchRemoteMasterLinkStatus(masterBaseURL string) adminRemoteMasterLinkStatus {
@@ -2905,6 +3167,19 @@ func (s *Server) adminPageData(ctx context.Context, message string) (map[string]
 		if profile.ServerMode == "AS-S" {
 			data["RemoteMasterLinkStatus"] = s.fetchRemoteMasterLinkStatus(profile.LinkedMasterURL)
 			if events, err := s.store.ListControllerUpdateEvents(ctx, 50); err == nil {
+				rawView := make([]adminControllerUpdateEventView, 0, len(events))
+				for _, e := range events {
+					kind, details := classifyControllerEvent(e)
+					rawView = append(rawView, adminControllerUpdateEventView{
+						EventID:        e.EventID,
+						MasterServerID: e.MasterServerID,
+						VaultVersion:   e.VaultVersion,
+						Status:         e.Status,
+						CreatedAt:      e.CreatedAt,
+						EventType:      kind,
+						EventDetails:   details,
+					})
+				}
 				latestByVersion := make(map[int64]models.ControllerUpdateEvent)
 				for _, e := range events {
 					cur, ok := latestByVersion[e.VaultVersion]
@@ -2922,10 +3197,23 @@ func (s *Server) adminPageData(ctx context.Context, message string) (map[string]
 					}
 					return filtered[i].VaultVersion > filtered[j].VaultVersion
 				})
-				data["ControllerUpdateEvents"] = filtered
-				data["ControllerUpdateEventsRaw"] = events
+				latestView := make([]adminControllerUpdateEventView, 0, len(filtered))
+				for _, e := range filtered {
+					kind, details := classifyControllerEvent(e)
+					latestView = append(latestView, adminControllerUpdateEventView{
+						EventID:        e.EventID,
+						MasterServerID: e.MasterServerID,
+						VaultVersion:   e.VaultVersion,
+						Status:         e.Status,
+						CreatedAt:      e.CreatedAt,
+						EventType:      kind,
+						EventDetails:   details,
+					})
+				}
+				data["ControllerUpdateEvents"] = latestView
+				data["ControllerUpdateEventsRaw"] = rawView
 				data["ControllerUpdateEventsRawCount"] = len(events)
-				data["ControllerUpdateEventsLatestCount"] = len(filtered)
+				data["ControllerUpdateEventsLatestCount"] = len(latestView)
 			}
 		}
 	}

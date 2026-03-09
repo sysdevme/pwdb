@@ -350,6 +350,17 @@ const (
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`
 
+	sqlUpsertUserReplica = `
+		INSERT INTO users (id, email, password_hash, master_password_hash, is_admin, status)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (id) DO UPDATE SET
+			email = EXCLUDED.email,
+			password_hash = EXCLUDED.password_hash,
+			master_password_hash = EXCLUDED.master_password_hash,
+			is_admin = EXCLUDED.is_admin,
+			status = EXCLUDED.status
+	`
+
 	sqlGetUserByEmail = `
 		SELECT id, email, status, password_hash, master_password_hash, is_admin, created_at
 		FROM users

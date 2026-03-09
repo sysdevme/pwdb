@@ -970,6 +970,29 @@ func (s *Store) CreateUser(ctx context.Context, user models.User) error {
 	return err
 }
 
+func (s *Store) UpsertUserReplica(ctx context.Context, user models.User) error {
+	id, err := uuid.Parse(strings.TrimSpace(user.ID))
+	if err != nil {
+		return err
+	}
+	email := strings.TrimSpace(user.Email)
+	if email == "" {
+		return errors.New("email required")
+	}
+	status := strings.TrimSpace(strings.ToLower(user.Status))
+	if status == "" {
+		status = "active"
+	}
+	if status != "pending" && status != "active" {
+		return errors.New("invalid status")
+	}
+	if strings.TrimSpace(user.PasswordHash) == "" || strings.TrimSpace(user.MasterPasswordHash) == "" {
+		return errors.New("password hashes required")
+	}
+	_, err = s.pool.Exec(ctx, sqlUpsertUserReplica, id, email, user.PasswordHash, user.MasterPasswordHash, user.IsAdmin, status)
+	return err
+}
+
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (models.User, error) {
 	var user models.User
 	var id uuid.UUID
@@ -1387,6 +1410,19 @@ func (s *Store) UnsharePasswordForUser(ctx context.Context, entryID, userID stri
 	return nil
 }
 
+func (s *Store) UpsertPasswordShareByIDs(ctx context.Context, entryID, userID string) error {
+	entryUUID, err := uuid.Parse(strings.TrimSpace(entryID))
+	if err != nil {
+		return err
+	}
+	userUUID, err := uuid.Parse(strings.TrimSpace(userID))
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, sqlInsertPasswordShare, entryUUID, userUUID)
+	return err
+}
+
 func (s *Store) ShareNoteWithUser(ctx context.Context, ownerUserID, noteID, targetEmail string) error {
 	ownerID, err := uuid.Parse(ownerUserID)
 	if err != nil {
@@ -1415,6 +1451,19 @@ func (s *Store) ShareNoteWithUser(ctx context.Context, ownerUserID, noteID, targ
 		return err
 	}
 	_, err = s.pool.Exec(ctx, sqlInsertNoteShare, noteUUID, targetID)
+	return err
+}
+
+func (s *Store) UpsertNoteShareByIDs(ctx context.Context, noteID, userID string) error {
+	noteUUID, err := uuid.Parse(strings.TrimSpace(noteID))
+	if err != nil {
+		return err
+	}
+	userUUID, err := uuid.Parse(strings.TrimSpace(userID))
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, sqlInsertNoteShare, noteUUID, userUUID)
 	return err
 }
 
