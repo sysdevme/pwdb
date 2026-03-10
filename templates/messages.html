@@ -38,16 +38,7 @@
                 <td>{{ .CreatedAt.Format "2006-01-02 15:04:05" }}</td>
                 <td><span class="badge text-bg-warning">pending confirmation</span></td>
                 <td>
-                  <button
-                    type="button"
-                    class="btn btn-sm btn-outline-primary"
-                    data-bs-toggle="modal"
-                    data-bs-target="#confirmSyncModal"
-                    data-bundle-id="{{ .ID }}"
-                    data-master-id="{{ .MasterServerID }}"
-                  >
-                    Confirm Sync
-                  </button>
+                  <a class="btn btn-sm btn-outline-primary" href="/sync/pending/review?id={{ .ID }}">Review Sync</a>
                 </td>
               </tr>
             {{ end }}
@@ -168,45 +159,4 @@
   </div>
 </div>
 
-<div class="modal fade" id="confirmSyncModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <form method="post" action="/sync/pending/confirm">
-        <div class="modal-header">
-          <h2 class="modal-title h5 mb-0">Confirm Sync</h2>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-        </div>
-        <div class="modal-body">
-          <p class="mb-3">Enter your master password to decrypt and merge the pending master-to-slave sync bundle.</p>
-          <div class="mb-3">
-            <label class="form-label">Master node</label>
-            <input type="text" class="form-control" id="syncConfirmMaster" disabled>
-          </div>
-          <input type="hidden" name="bundle_id" id="syncConfirmBundleID">
-          <div>
-            <label class="form-label">Master password</label>
-            <input type="password" name="master_password" class="form-control" required>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary">Decrypt and Apply</button>
-        </div>
-      </form>
-    </div>
-  </div>
-</div>
-
-<script>
-  document.addEventListener("DOMContentLoaded", () => {
-    const modal = document.getElementById("confirmSyncModal");
-    if (!modal) return;
-    modal.addEventListener("show.bs.modal", (event) => {
-      const button = event.relatedTarget;
-      if (!button) return;
-      document.getElementById("syncConfirmBundleID").value = button.getAttribute("data-bundle-id") || "";
-      document.getElementById("syncConfirmMaster").value = button.getAttribute("data-master-id") || "";
-    });
-  });
-</script>
 {{ end }}

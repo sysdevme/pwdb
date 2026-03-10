@@ -13,6 +13,7 @@ import (
 	"html/template"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,7 +40,7 @@ const userCtxKey ctxKey = 1
 const (
 	defaultPageSize               = 10
 	defaultUnlockMinutes          = 5
-	defaultAppVersion             = "4.0.7"
+	defaultAppVersion             = "4.0.8"
 	defaultBuildAuthor            = "unknown"
 	defaultBuildLastUpdate        = "unknown"
 	controllerHealthcheckInterval = 30 * time.Second
@@ -50,6 +51,7 @@ const (
 	loginBlockThreshold           = 3
 	loginBlockMaxMinutes          = 15
 	adminProbeBlockMinutes        = 5
+	trustedAdminSubnetCIDR        = "10.8.0.0/24"
 )
 
 type uiSettings struct {
@@ -142,6 +144,21 @@ type controllerSyncUserBundle struct {
 	NoteShares     []controllerSnapshotShare `json:"note_shares"`
 }
 
+type pendingSyncBundlePreview struct {
+	BundleID            string
+	MasterServerID      string
+	MasterServerURL     string
+	CreatedAt           time.Time
+	UserID              string
+	UserEmail           string
+	PasswordsCount      int
+	NotesCount          int
+	PasswordSharesCount int
+	NoteSharesCount     int
+	PasswordTitles      []string
+	NoteTitles          []string
+}
+
 type controllerBootstrapAuthRequest struct {
 	ControllerID string `json:"controller_id"`
 	MasterKey    string `json:"master_key"`
@@ -191,6 +208,12 @@ type requestLogEntry struct {
 	RemoteIP   string
 	StatusCode int
 	DurationMS int64
+}
+
+type adminGuardBlockedIPView struct {
+	IP           string
+	BlockedUntil string
+	BlockedFor   string
 }
 
 type requestLogStatusRecorder struct {
@@ -304,6 +327,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/messages", s.handleMessagesPage)
 	mux.HandleFunc("/messages/send", s.handleMessageSend)
 	mux.HandleFunc("/messages/read", s.handleMessageRead)
+	mux.HandleFunc("/sync/pending/review", s.handlePendingSyncReview)
 	mux.HandleFunc("/sync/pending/confirm", s.handlePendingSyncConfirm)
 	mux.HandleFunc("/groups", s.handleGroups)
 	mux.HandleFunc("/groups/edit", s.handleGroupEdit)
@@ -331,6 +355,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/admin/users/create", s.handleAdminUsersCreatePage)
 	mux.HandleFunc("/admin/users/list", s.handleAdminUsersListPage)
 	mux.HandleFunc("/admin/about", s.handleAdminAboutPage)
+	mux.HandleFunc("/admin/guard", s.handleAdminGuardPage)
+	mux.HandleFunc("/admin/guard/block", s.handleAdminGuardBlock)
+	mux.HandleFunc("/admin/guard/unblock", s.handleAdminGuardUnblock)
 	mux.HandleFunc("/admin/users/update", s.handleAdminUpdateUser)
 	mux.HandleFunc("/admin/users/role", s.handleAdminUpdateUserRole)
 	mux.HandleFunc("/admin/controllers/status", s.handleAdminSetControllerStatus)
@@ -1251,6 +1278,73 @@ func (s *Server) applyPendingUserSyncBundle(ctx context.Context, userID string, 
 		applied["note_shares"]++
 	}
 	return applied, nil
+}
+
+func (s *Server) decryptPendingSyncBundle(ctx context.Context, user models.User, bundleID string, masterPassword string) (models.PendingSyncBundle, controllerSyncUserBundle, error) {
+	if strings.TrimSpace(bundleID) == "" || strings.TrimSpace(masterPassword) == "" {
+		return models.PendingSyncBundle{}, controllerSyncUserBundle{}, errors.New("bundle ID and master password are required")
+	}
+	if !crypto.VerifyPassword(masterPassword, user.MasterPasswordHash) {
+		return models.PendingSyncBundle{}, controllerSyncUserBundle{}, errors.New("master password is invalid")
+	}
+	if err := s.ensureUserSyncKey(ctx, user.ID, masterPassword); err != nil {
+		return models.PendingSyncBundle{}, controllerSyncUserBundle{}, err
+	}
+	_, masterWrapped, _, err := s.store.GetUserSyncKey(ctx, user.ID)
+	if err != nil {
+		return models.PendingSyncBundle{}, controllerSyncUserBundle{}, err
+	}
+	key, err := crypto.UnwrapKeyWithPassword(masterPassword, masterWrapped)
+	if err != nil {
+		return models.PendingSyncBundle{}, controllerSyncUserBundle{}, errors.New("failed to unlock sync key")
+	}
+	item, ciphertext, err := s.store.GetPendingSyncBundleForUser(ctx, user.ID, bundleID)
+	if err != nil {
+		return models.PendingSyncBundle{}, controllerSyncUserBundle{}, err
+	}
+	if item.Status != "pending" {
+		return models.PendingSyncBundle{}, controllerSyncUserBundle{}, errors.New("sync bundle is no longer pending")
+	}
+	plaintext, err := crypto.DecryptWithKey(key, ciphertext)
+	if err != nil {
+		return item, controllerSyncUserBundle{}, errors.New("failed to decrypt sync bundle")
+	}
+	var bundle controllerSyncUserBundle
+	if err := json.Unmarshal(plaintext, &bundle); err != nil {
+		return item, controllerSyncUserBundle{}, errors.New("invalid sync bundle payload")
+	}
+	if strings.TrimSpace(bundle.UserID) != user.ID {
+		return item, controllerSyncUserBundle{}, errors.New("bundle user mismatch")
+	}
+	return item, bundle, nil
+}
+
+func buildPendingSyncBundlePreview(item models.PendingSyncBundle, bundle controllerSyncUserBundle) pendingSyncBundlePreview {
+	preview := pendingSyncBundlePreview{
+		BundleID:            item.ID,
+		MasterServerID:      item.MasterServerID,
+		MasterServerURL:     item.MasterServerURL,
+		CreatedAt:           item.CreatedAt,
+		UserID:              bundle.UserID,
+		UserEmail:           bundle.UserEmail,
+		PasswordsCount:      len(bundle.Passwords),
+		NotesCount:          len(bundle.Notes),
+		PasswordSharesCount: len(bundle.PasswordShares),
+		NoteSharesCount:     len(bundle.NoteShares),
+	}
+	for i, entry := range bundle.Passwords {
+		if i >= 10 {
+			break
+		}
+		preview.PasswordTitles = append(preview.PasswordTitles, strings.TrimSpace(entry.Title))
+	}
+	for i, note := range bundle.Notes {
+		if i >= 10 {
+			break
+		}
+		preview.NoteTitles = append(preview.NoteTitles, strings.TrimSpace(note.Title))
+	}
+	return preview
 }
 
 func (s *Server) handleControllerSnapshotExport(w http.ResponseWriter, r *http.Request) {
@@ -2696,6 +2790,58 @@ func (s *Server) handleMessageRead(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/messages", http.StatusSeeOther)
 }
 
+func (s *Server) renderPendingSyncReviewPage(w http.ResponseWriter, r *http.Request, bundle models.PendingSyncBundle, preview *pendingSyncBundlePreview, message string) {
+	data := map[string]any{
+		"Title":  "Pending Sync Review",
+		"Bundle": bundle,
+	}
+	if preview != nil {
+		data["Preview"] = preview
+	}
+	if message != "" {
+		data["Message"] = message
+	}
+	s.renderWithUnlock(w, r, "sync_pending_review.html", data)
+}
+
+func (s *Server) handlePendingSyncReview(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		bundleID := strings.TrimSpace(r.URL.Query().Get("id"))
+		if bundleID == "" {
+			http.Redirect(w, r, "/messages?msg="+url.QueryEscape("Pending sync bundle ID is required."), http.StatusSeeOther)
+			return
+		}
+		item, _, err := s.store.GetPendingSyncBundleForUser(r.Context(), user.ID, bundleID)
+		if err != nil {
+			http.Redirect(w, r, "/messages?msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			return
+		}
+		s.renderPendingSyncReviewPage(w, r, item, nil, strings.TrimSpace(r.URL.Query().Get("msg")))
+	case http.MethodPost:
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		bundleID := strings.TrimSpace(r.FormValue("bundle_id"))
+		masterPassword := r.FormValue("master_password")
+		item, bundle, err := s.decryptPendingSyncBundle(r.Context(), user, bundleID, masterPassword)
+		if err != nil {
+			http.Redirect(w, r, "/sync/pending/review?id="+url.QueryEscape(bundleID)+"&msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			return
+		}
+		preview := buildPendingSyncBundlePreview(item, bundle)
+		s.renderPendingSyncReviewPage(w, r, item, &preview, "Preview ready. Review the remote data, then confirm merge.")
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func (s *Server) handlePendingSyncConfirm(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -2712,55 +2858,21 @@ func (s *Server) handlePendingSyncConfirm(w http.ResponseWriter, r *http.Request
 	}
 	bundleID := strings.TrimSpace(r.FormValue("bundle_id"))
 	masterPassword := r.FormValue("master_password")
-	if bundleID == "" || strings.TrimSpace(masterPassword) == "" {
-		http.Redirect(w, r, "/messages?msg="+url.QueryEscape("Bundle ID and master password are required."), http.StatusSeeOther)
-		return
-	}
-	if !crypto.VerifyPassword(masterPassword, user.MasterPasswordHash) {
-		http.Redirect(w, r, "/messages?msg="+url.QueryEscape("Master password is invalid."), http.StatusSeeOther)
-		return
-	}
-	if err := s.ensureUserSyncKey(r.Context(), user.ID, masterPassword); err != nil {
-		http.Redirect(w, r, "/messages?msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
-		return
-	}
-	_, masterWrapped, _, err := s.store.GetUserSyncKey(r.Context(), user.ID)
+	item, bundle, err := s.decryptPendingSyncBundle(r.Context(), user, bundleID, masterPassword)
 	if err != nil {
-		http.Redirect(w, r, "/messages?msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
-		return
-	}
-	key, err := crypto.UnwrapKeyWithPassword(masterPassword, masterWrapped)
-	if err != nil {
-		http.Redirect(w, r, "/messages?msg="+url.QueryEscape("Failed to unlock sync key."), http.StatusSeeOther)
-		return
-	}
-	_, ciphertext, err := s.store.GetPendingSyncBundleForUser(r.Context(), user.ID, bundleID)
-	if err != nil {
-		http.Redirect(w, r, "/messages?msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
-		return
-	}
-	plaintext, err := crypto.DecryptWithKey(key, ciphertext)
-	if err != nil {
-		_ = s.store.MarkPendingSyncBundleFailed(r.Context(), user.ID, bundleID, "decrypt failed")
-		http.Redirect(w, r, "/messages?msg="+url.QueryEscape("Failed to decrypt sync bundle."), http.StatusSeeOther)
-		return
-	}
-	var bundle controllerSyncUserBundle
-	if err := json.Unmarshal(plaintext, &bundle); err != nil {
-		_ = s.store.MarkPendingSyncBundleFailed(r.Context(), user.ID, bundleID, "invalid bundle payload")
-		http.Redirect(w, r, "/messages?msg="+url.QueryEscape("Invalid sync bundle payload."), http.StatusSeeOther)
+		http.Redirect(w, r, "/sync/pending/review?id="+url.QueryEscape(bundleID)+"&msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
 	}
 	if _, err := s.applyPendingUserSyncBundle(r.Context(), user.ID, bundle); err != nil {
 		_ = s.store.MarkPendingSyncBundleFailed(r.Context(), user.ID, bundleID, err.Error())
-		http.Redirect(w, r, "/messages?msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		http.Redirect(w, r, "/sync/pending/review?id="+url.QueryEscape(bundleID)+"&msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
 	}
 	if err := s.store.MarkPendingSyncBundleApplied(r.Context(), user.ID, bundleID); err != nil {
-		http.Redirect(w, r, "/messages?msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		http.Redirect(w, r, "/sync/pending/review?id="+url.QueryEscape(bundleID)+"&msg="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, "/messages?msg="+url.QueryEscape("Sync bundle applied."), http.StatusSeeOther)
+	http.Redirect(w, r, "/messages?msg="+url.QueryEscape(fmt.Sprintf("Sync bundle applied from %s.", item.MasterServerID)), http.StatusSeeOther)
 }
 
 func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
@@ -3682,6 +3794,14 @@ func (s *Server) renderAdminPage(w http.ResponseWriter, r *http.Request, message
 	s.renderWithUnlock(w, r, "admin.html", data)
 }
 
+func redirectAdminWithMessage(w http.ResponseWriter, r *http.Request, message string) {
+	target := "/admin"
+	if strings.TrimSpace(message) != "" {
+		target += "?msg=" + url.QueryEscape(message)
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
 func (s *Server) renderAdminUsersCreatePage(w http.ResponseWriter, r *http.Request, message string) {
 	data := map[string]any{
 		"Title": "Admin - Users - Create",
@@ -3708,6 +3828,18 @@ func (s *Server) renderAdminUsersListPage(w http.ResponseWriter, r *http.Request
 	s.renderWithUnlock(w, r, "admin_users_list.html", data)
 }
 
+func (s *Server) renderAdminGuardPage(w http.ResponseWriter, r *http.Request, message string) {
+	data := map[string]any{
+		"Title":       "Admin - Guard",
+		"BlockedIPs":  s.listAdminBlockedIPs(),
+		"TrustedCIDR": trustedAdminSubnetCIDR,
+	}
+	if message != "" {
+		data["Message"] = message
+	}
+	s.renderWithUnlock(w, r, "admin_guard.html", data)
+}
+
 func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -3718,7 +3850,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	s.renderAdminPage(w, r, "")
+	s.renderAdminPage(w, r, strings.TrimSpace(r.URL.Query().Get("msg")))
 }
 
 func (s *Server) handleAdminRequestLogs(w http.ResponseWriter, r *http.Request) {
@@ -3783,6 +3915,82 @@ func (s *Server) handleAdminAboutPage(w http.ResponseWriter, r *http.Request) {
 		"BuildLastUpdate": lastUpdate,
 		"BuildRepoURL":    repoURL,
 	})
+}
+
+func (s *Server) handleAdminGuardPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok || !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	s.renderAdminGuardPage(w, r, strings.TrimSpace(r.URL.Query().Get("msg")))
+}
+
+func (s *Server) handleAdminGuardBlock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok || !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	clientIP := strings.TrimSpace(r.FormValue("client_ip"))
+	if net.ParseIP(clientIP) == nil {
+		http.Error(w, "valid IP is required", http.StatusBadRequest)
+		return
+	}
+	minutes := adminProbeBlockMinutes
+	if raw := strings.TrimSpace(r.FormValue("minutes")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			http.Error(w, "minutes must be a positive integer", http.StatusBadRequest)
+			return
+		}
+		minutes = parsed
+	}
+	s.blockAdminAccess(clientIP, time.Duration(minutes)*time.Minute)
+	http.Redirect(w, r, "/admin/guard?msg="+url.QueryEscape("IP blocked."), http.StatusSeeOther)
+}
+
+func (s *Server) handleAdminGuardUnblock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isUnlocked(r) {
+		http.Error(w, "unlock required", http.StatusUnauthorized)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok || !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	clientIP := strings.TrimSpace(r.FormValue("client_ip"))
+	if clientIP == "" {
+		http.Error(w, "client_ip is required", http.StatusBadRequest)
+		return
+	}
+	s.unblockAdminAccess(clientIP)
+	http.Redirect(w, r, "/admin/guard?msg="+url.QueryEscape("IP unblocked."), http.StatusSeeOther)
 }
 
 func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -3979,10 +4187,10 @@ func (s *Server) handleAdminSetControllerStatus(w http.ResponseWriter, r *http.R
 		return
 	}
 	if status == "active" {
-		s.renderAdminPage(w, r, "Controller approved.")
+		redirectAdminWithMessage(w, r, "Controller approved.")
 		return
 	}
-	s.renderAdminPage(w, r, "Controller set to non-approved.")
+	redirectAdminWithMessage(w, r, "Controller set to non-approved.")
 }
 
 func (s *Server) handleAdminSetControllerWeight(w http.ResponseWriter, r *http.Request) {
@@ -4018,7 +4226,7 @@ func (s *Server) handleAdminSetControllerWeight(w http.ResponseWriter, r *http.R
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.renderAdminPage(w, r, "Controller weight updated.")
+	redirectAdminWithMessage(w, r, "Controller weight updated.")
 }
 
 func (s *Server) handleAdminCleanupStaleControllers(w http.ResponseWriter, r *http.Request) {
@@ -4055,10 +4263,10 @@ func (s *Server) handleAdminCleanupStaleControllers(w http.ResponseWriter, r *ht
 		return
 	}
 	if updated == 0 {
-		s.renderAdminPage(w, r, "Stale controller cleanup complete. No controllers matched threshold.")
+		redirectAdminWithMessage(w, r, "Stale controller cleanup complete. No controllers matched threshold.")
 		return
 	}
-	s.renderAdminPage(w, r, fmt.Sprintf("Stale controller cleanup complete. Disabled %d controllers.", updated))
+	redirectAdminWithMessage(w, r, fmt.Sprintf("Stale controller cleanup complete. Disabled %d controllers.", updated))
 }
 
 func (s *Server) handleAdminCleanupControllerLinks(w http.ResponseWriter, r *http.Request) {
@@ -4081,10 +4289,10 @@ func (s *Server) handleAdminCleanupControllerLinks(w http.ResponseWriter, r *htt
 		return
 	}
 	if removed == 0 {
-		s.renderAdminPage(w, r, "Controller links cleanup complete. No duplicates found.")
+		redirectAdminWithMessage(w, r, "Controller links cleanup complete. No duplicates found.")
 		return
 	}
-	s.renderAdminPage(w, r, fmt.Sprintf("Controller links cleanup complete. Removed %d duplicate rows.", removed))
+	redirectAdminWithMessage(w, r, fmt.Sprintf("Controller links cleanup complete. Removed %d duplicate rows.", removed))
 }
 
 func (s *Server) handleAdminServiceRestart(w http.ResponseWriter, r *http.Request) {
@@ -4637,6 +4845,8 @@ func breadcrumbLabel(segment string) string {
 		return "List"
 	case "about":
 		return "About"
+	case "guard":
+		return "Guard"
 	case "passwords":
 		return "Passwords"
 	case "notes":
@@ -4837,6 +5047,53 @@ func (s *Server) adminBlockedFor(clientIP string) time.Duration {
 	return time.Until(until)
 }
 
+func (s *Server) unblockAdminAccess(clientIP string) {
+	ip := strings.TrimSpace(clientIP)
+	if ip == "" {
+		return
+	}
+	s.adminProbeMu.Lock()
+	defer s.adminProbeMu.Unlock()
+	delete(s.adminProbeBlockedIPs, ip)
+}
+
+func (s *Server) listAdminBlockedIPs() []adminGuardBlockedIPView {
+	now := time.Now()
+	s.adminProbeMu.Lock()
+	defer s.adminProbeMu.Unlock()
+	if len(s.adminProbeBlockedIPs) == 0 {
+		return nil
+	}
+	items := make([]adminGuardBlockedIPView, 0, len(s.adminProbeBlockedIPs))
+	for ip, until := range s.adminProbeBlockedIPs {
+		if now.After(until) {
+			delete(s.adminProbeBlockedIPs, ip)
+			continue
+		}
+		items = append(items, adminGuardBlockedIPView{
+			IP:           ip,
+			BlockedUntil: formatAdminTimestamp(until),
+			BlockedFor:   formatDurationRoundedMinute(time.Until(until)),
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].IP < items[j].IP
+	})
+	return items
+}
+
+func isTrustedAdminSubnet(clientIP string) bool {
+	ip := net.ParseIP(strings.TrimSpace(clientIP))
+	if ip == nil {
+		return false
+	}
+	_, network, err := net.ParseCIDR(trustedAdminSubnetCIDR)
+	if err != nil {
+		return false
+	}
+	return network.Contains(ip)
+}
+
 func formatDurationRoundedMinute(d time.Duration) string {
 	if d <= 0 {
 		return "1 minute"
@@ -4853,15 +5110,28 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		path := r.URL.Path
 		clientIP := clientIPFromRequest(r)
 		if strings.HasPrefix(path, "/admin") {
-			if blockedFor := s.adminBlockedFor(clientIP); blockedFor > 0 {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			// /admin does not require query parameters; treat them as suspicious probes.
-			if path == "/admin" && strings.TrimSpace(r.URL.RawQuery) != "" {
-				s.blockAdminAccess(clientIP, time.Duration(adminProbeBlockMinutes)*time.Minute)
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
+			trustedSubnet := isTrustedAdminSubnet(clientIP)
+			if !trustedSubnet {
+				if blockedFor := s.adminBlockedFor(clientIP); blockedFor > 0 {
+					http.Error(w, "forbidden", http.StatusForbidden)
+					return
+				}
+				// /admin only permits a small set of query parameters; treat anything else as suspicious probes.
+				if path == "/admin" && strings.TrimSpace(r.URL.RawQuery) != "" {
+					values := r.URL.Query()
+					allowed := true
+					for key := range values {
+						if key != "msg" {
+							allowed = false
+							break
+						}
+					}
+					if !allowed {
+						s.blockAdminAccess(clientIP, time.Duration(adminProbeBlockMinutes)*time.Minute)
+						http.Error(w, "forbidden", http.StatusForbidden)
+						return
+					}
+				}
 			}
 		}
 		if strings.HasPrefix(path, "/static/") || strings.HasPrefix(path, "/controller/") || path == "/login" || path == "/setup" || path == "/auth/biometric-token" || path == "/share/password" {

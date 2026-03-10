@@ -1,0 +1,67 @@
+{{ define "content" }}
+<h1 class="h3 mb-3">Admin Guard</h1>
+{{ if .Message }}
+<div class="alert alert-success">{{ .Message }}</div>
+{{ end }}
+<div class="alert alert-secondary">
+  Auto-blocking is disabled for trusted subnet <code>{{ .TrustedCIDR }}</code>.
+</div>
+<div class="row g-4">
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Block IP</h5>
+        <form method="post" action="/admin/guard/block">
+          <div class="mb-3">
+            <label class="form-label">Client IP</label>
+            <input type="text" name="client_ip" class="form-control" placeholder="203.0.113.10" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Minutes</label>
+            <input type="number" min="1" step="1" name="minutes" value="5" class="form-control" required>
+          </div>
+          <button class="btn btn-warning" type="submit">Block</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Blocked IPs</h5>
+        {{ if .BlockedIPs }}
+        <div class="table-responsive">
+          <table class="table table-sm table-striped align-middle mb-0">
+            <thead>
+              <tr>
+                <th>IP</th>
+                <th>Blocked Until</th>
+                <th>Remaining</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {{ range .BlockedIPs }}
+              <tr>
+                <td><code>{{ .IP }}</code></td>
+                <td>{{ .BlockedUntil }}</td>
+                <td>{{ .BlockedFor }}</td>
+                <td class="text-end">
+                  <form method="post" action="/admin/guard/unblock">
+                    <input type="hidden" name="client_ip" value="{{ .IP }}">
+                    <button class="btn btn-sm btn-outline-secondary" type="submit">Remove</button>
+                  </form>
+                </td>
+              </tr>
+              {{ end }}
+            </tbody>
+          </table>
+        </div>
+        {{ else }}
+        <div class="text-muted">No blocked IPs.</div>
+        {{ end }}
+      </div>
+    </div>
+  </div>
+</div>
+{{ end }}

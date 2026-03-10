@@ -1,7 +1,7 @@
 # Password Manager (Go) - Unified README
 
 Default development branch: `v4`.
-Current release tag: `4.0.7`.
+Current release tag: `4.0.8`.
 
 This repository now combines:
 
@@ -141,6 +141,7 @@ SSH hardening note:
 - Timed unlock session with manual lock
 - Account page for user credential updates
 - Admin backup/restore and cleanup tools
+- Admin Guard page for viewing blocked IPs and manually blocking/unblocking addresses
 - 1Password 7 `.1pif` import + import issue tracking
 - Optional macOS biometric helper flow; Windows falls back to password unlock
 - Admin users navigation:
@@ -192,7 +193,16 @@ Current protocol endpoints:
 - Controller -> Master (status query):
   - `GET /controller/links/status`
 - User -> Slave:
+  - `GET /sync/pending/review` opens a per-user pending bundle review page on `AS-S`
+  - `POST /sync/pending/review` decrypts a pending per-user sync bundle preview after master-password confirmation
   - `POST /sync/pending/confirm` decrypts and applies a pending per-user sync bundle after master-password confirmation
+
+Current pending-bundle UX on slave:
+
+- Messages page shows system sync notifications for the current user only
+- User opens `Review Sync`, enters the master password, and sees a decrypted preview
+- Preview shows counts and sample titles for passwords/notes before merge
+- `Confirm and Merge` applies only that user bundle on that slave node
 
 Embedded controller status (`controller/`):
 

@@ -29,6 +29,7 @@
             <h5 class="card-title mb-1">{{ .Name }}</h5>
             <div class="small text-muted mb-3">Items: {{ .Count }}</div>
             <div class="d-flex gap-2">
+              <a class="btn btn-sm btn-outline-primary" href="{{ .URL }}">View</a>
               <button type="button" class="btn btn-sm btn-outline-secondary" data-id="{{ .ID }}" data-name="{{ .Name }}" onclick="openGroupEdit(this)">Edit</button>
               <form method="post" action="/groups/remove" onsubmit="return confirm('Remove group from all records?');">
                 <input type="hidden" name="id" value="{{ .ID }}">

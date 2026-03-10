@@ -1,0 +1,102 @@
+{{ define "content" }}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">Pending Sync Review</h1>
+  <a class="btn btn-outline-secondary btn-sm" href="/messages">Back to Messages</a>
+</div>
+
+{{ if .Message }}
+<div class="alert alert-info">{{ .Message }}</div>
+{{ end }}
+
+<div class="card mb-4">
+  <div class="card-body">
+    <h2 class="h5">Bundle</h2>
+    <dl class="row mb-0">
+      <dt class="col-sm-3">Master</dt>
+      <dd class="col-sm-9"><code>{{ .Bundle.MasterServerID }}</code>{{ if .Bundle.MasterServerURL }} <span class="text-muted">{{ .Bundle.MasterServerURL }}</span>{{ end }}</dd>
+      <dt class="col-sm-3">Created</dt>
+      <dd class="col-sm-9">{{ .Bundle.CreatedAt.Format "2006-01-02 15:04:05" }}</dd>
+      <dt class="col-sm-3">Status</dt>
+      <dd class="col-sm-9"><span class="badge {{ if eq .Bundle.Status "pending" }}text-bg-warning{{ else if eq .Bundle.Status "applied" }}text-bg-success{{ else }}text-bg-danger{{ end }}">{{ .Bundle.Status }}</span></dd>
+      <dt class="col-sm-3">Payload Hash</dt>
+      <dd class="col-sm-9"><code>{{ .Bundle.PayloadHash }}</code></dd>
+    </dl>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-5">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h5">Decrypt Preview</h2>
+        <p class="text-muted">Preview is only for this pending user bundle on this slave node. Nothing is applied until you confirm merge.</p>
+        <form method="post" action="/sync/pending/review">
+          <input type="hidden" name="bundle_id" value="{{ .Bundle.ID }}">
+          <div class="mb-3">
+            <label class="form-label">Master Password</label>
+            <input type="password" name="master_password" class="form-control" required>
+          </div>
+          <button class="btn btn-outline-primary" type="submit" {{ if ne .Bundle.Status "pending" }}disabled{{ end }}>Preview Bundle</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h5">Preview</h2>
+        {{ if .Preview }}
+        <div class="mb-3">
+          <div><span class="fw-semibold">User:</span> <code>{{ .Preview.UserEmail }}</code></div>
+          <div class="small text-muted">Remote user ID: {{ .Preview.UserID }}</div>
+        </div>
+        <div class="row row-cols-2 g-3 mb-3">
+          <div class="col"><div class="border rounded p-2"><div class="small text-muted">Passwords</div><div class="h4 mb-0">{{ .Preview.PasswordsCount }}</div></div></div>
+          <div class="col"><div class="border rounded p-2"><div class="small text-muted">Notes</div><div class="h4 mb-0">{{ .Preview.NotesCount }}</div></div></div>
+          <div class="col"><div class="border rounded p-2"><div class="small text-muted">Password Shares</div><div class="h4 mb-0">{{ .Preview.PasswordSharesCount }}</div></div></div>
+          <div class="col"><div class="border rounded p-2"><div class="small text-muted">Note Shares</div><div class="h4 mb-0">{{ .Preview.NoteSharesCount }}</div></div></div>
+        </div>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <h3 class="h6">Password Titles</h3>
+            {{ if .Preview.PasswordTitles }}
+            <ul class="mb-0">
+              {{ range .Preview.PasswordTitles }}
+              <li>{{ . }}</li>
+              {{ end }}
+            </ul>
+            {{ else }}
+            <div class="text-muted">No passwords in bundle.</div>
+            {{ end }}
+          </div>
+          <div class="col-md-6">
+            <h3 class="h6">Note Titles</h3>
+            {{ if .Preview.NoteTitles }}
+            <ul class="mb-0">
+              {{ range .Preview.NoteTitles }}
+              <li>{{ . }}</li>
+              {{ end }}
+            </ul>
+            {{ else }}
+            <div class="text-muted">No notes in bundle.</div>
+            {{ end }}
+          </div>
+        </div>
+        <hr>
+        <form method="post" action="/sync/pending/confirm">
+          <input type="hidden" name="bundle_id" value="{{ .Bundle.ID }}">
+          <div class="mb-3">
+            <label class="form-label">Master Password</label>
+            <input type="password" name="master_password" class="form-control" required>
+          </div>
+          <button class="btn btn-primary" type="submit" {{ if ne .Bundle.Status "pending" }}disabled{{ end }}>Confirm and Merge</button>
+        </form>
+        {{ else }}
+        <div class="text-muted">Decrypt the bundle to review passwords, notes, and share counts before merge.</div>
+        {{ end }}
+      </div>
+    </div>
+  </div>
+</div>
+{{ end }}
