@@ -45,6 +45,8 @@ Windows (PowerShell):
 
 ```powershell
 cd E:\pwdb-main\controller
+$env:CONTROLLER_MASTER_KEY = "<CONTROLLER_MASTER_KEY>"
+$env:CONTROLLER_SHARED_TOKEN = "<CONTROLLER_SHARED_TOKEN>" # optional legacy compatibility
 go run ./cmd/controller -config configs/controller.dev.json
 ```
 
@@ -59,6 +61,7 @@ go run ./cmd/controller -config configs/controller.dev.json
 Environment overrides:
 
 - `CONTROLLER_MASTER_KEY` overrides `master.master_key`
+- `CONTROLLER_SHARED_TOKEN` is optional and only for legacy compatibility paths
 
 ## API (controller local)
 
@@ -137,6 +140,15 @@ Linux/macOS:
 ```bash
 cd /opt/pwdb-main/controller
 CONTROLLER_MASTER_KEY="<CONTROLLER_MASTER_KEY>" \
+go run ./cmd/controller -config configs/controller.dev.json
+```
+
+Windows (PowerShell):
+
+```powershell
+cd E:\pwdb-main\controller
+$env:CONTROLLER_MASTER_KEY = "<CONTROLLER_MASTER_KEY>"
+$env:CONTROLLER_SHARED_TOKEN = "<CONTROLLER_SHARED_TOKEN>" # optional legacy compatibility
 go run ./cmd/controller -config configs/controller.dev.json
 ```
 
