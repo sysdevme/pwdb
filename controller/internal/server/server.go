@@ -355,7 +355,10 @@ func (s *Server) handleListSlaves(w http.ResponseWriter, r *http.Request) {
 func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 	s.syncRunMu.Lock()
 	defer s.syncRunMu.Unlock()
+	return s.syncSlavesWithMasterLocked(true)
+}
 
+func (s *Server) syncSlavesWithMasterLocked(allowRebootstrap bool) (syncResult, error) {
 	start := time.Now().UTC()
 	s.setAttempt(start)
 
@@ -363,9 +366,11 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 	if strings.TrimSpace(st.CurrentToken) == "" {
 		masterKey := strings.TrimSpace(s.cfg.Master.MasterKey)
 		if masterKey != "" {
+			log.Printf("worker: controller token missing, attempting bootstrap for controller_id=%s", s.cfg.ControllerID)
 			token, err := s.master.Bootstrap(s.cfg.ControllerID, masterKey)
 			if err != nil {
 				if master.IsPendingApproval(err) {
+					log.Printf("worker: bootstrap pending approval for controller_id=%s", s.cfg.ControllerID)
 					s.setPending("controller is pending master approval")
 					return syncResult{}, nil
 				}
@@ -376,6 +381,7 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 				s.setFailure(err)
 				return syncResult{}, err
 			}
+			log.Printf("worker: bootstrap succeeded for controller_id=%s", s.cfg.ControllerID)
 			st = s.state.Snapshot()
 		}
 	}
@@ -393,13 +399,19 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 	token := st.CurrentToken
 	controllers, nextToken, err := s.master.ListControllers(token)
 	if err != nil {
+		if allowRebootstrap && s.resetInvalidControllerToken(err) {
+			return s.syncSlavesWithMasterLocked(false)
+		}
 		s.setFailure(err)
 		return syncResult{}, err
 	}
 	token = nextToken
 	if err := s.state.SetToken(token); err != nil {
 		log.Printf("worker: failed to persist rotated token: %v", err)
+	} else {
+		log.Printf("worker: rotated controller token after controller list refresh")
 	}
+	log.Printf("worker: fetched %d controllers from master", len(controllers))
 
 	activeControllers := make(map[string]struct{}, len(controllers))
 	controllerWeights := make(map[string]int, len(controllers))
@@ -423,12 +435,17 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 	res := syncResult{}
 	snapshot, nextToken, err := s.master.ExportSnapshot(token)
 	if err != nil {
+		if allowRebootstrap && s.resetInvalidControllerToken(err) {
+			return s.syncSlavesWithMasterLocked(false)
+		}
 		s.setFailure(err)
 		return res, err
 	}
 	token = nextToken
 	if err := s.state.SetToken(token); err != nil {
 		log.Printf("worker: failed to persist rotated token after snapshot export: %v", err)
+	} else {
+		log.Printf("worker: rotated controller token after snapshot export")
 	}
 	vaultFingerprint, err := snapshotContentFingerprint(snapshot.Snapshot)
 	if err != nil {
@@ -454,12 +471,17 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 	masterID := masterServerIDFromURL(s.cfg.Master.BaseURL)
 	for _, slave := range slaves {
 		res.Attempted++
+		log.Printf("worker: syncing slave_id=%s controller_id=%s url=%s", slave.SlaveID, slave.ControllerID, slave.SlaveURL)
 		if _, ok := activeControllers[strings.TrimSpace(slave.ControllerID)]; !ok {
 			res.SkippedInactive++
+			log.Printf("worker: skipping slave_id=%s because controller_id=%s is not active", slave.SlaveID, slave.ControllerID)
 			continue
 		}
 		nextToken, err := s.master.PairSlave(token, slave.SlaveID, slave.SlaveURL)
 		if err != nil {
+			if allowRebootstrap && s.resetInvalidControllerToken(err) {
+				return s.syncSlavesWithMasterLocked(false)
+			}
 			res.Failed++
 			if firstErr == nil {
 				firstErr = fmt.Errorf("pair relay failed for slave_id=%s: %w", slave.SlaveID, err)
@@ -471,16 +493,22 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 		token = nextToken
 		if err := s.state.SetToken(token); err != nil {
 			log.Printf("worker: failed to persist rotated token after pair relay: %v", err)
+		} else {
+			log.Printf("worker: pair relay succeeded for slave_id=%s and controller token rotated", slave.SlaveID)
 		}
 		res.Paired++
 
 		if slave.LastSyncedVersion >= st.CurrentVaultVersion && st.CurrentVaultVersion > 0 {
 			res.SkippedUpToDate++
+			log.Printf("worker: skipping apply for slave_id=%s because it is already at version=%d", slave.SlaveID, slave.LastSyncedVersion)
 			continue
 		}
 
 		grantToken, nextToken, err := s.master.IssueSlaveGrant(token, slave.SlaveURL)
 		if err != nil {
+			if allowRebootstrap && s.resetInvalidControllerToken(err) {
+				return s.syncSlavesWithMasterLocked(false)
+			}
 			res.Failed++
 			if firstErr == nil {
 				firstErr = fmt.Errorf("slave grant failed for slave_id=%s: %w", slave.SlaveID, err)
@@ -492,6 +520,8 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 		token = nextToken
 		if err := s.state.SetToken(token); err != nil {
 			log.Printf("worker: failed to persist rotated token after slave grant: %v", err)
+		} else {
+			log.Printf("worker: issued short-lived slave grant for slave_id=%s and rotated controller token", slave.SlaveID)
 		}
 
 		if err := s.master.ApplySnapshotToSlave(slave.SlaveURL, grantToken, masterID, s.cfg.Master.BaseURL, snapshot); err != nil {
@@ -505,6 +535,9 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 		}
 		nextToken, err = s.master.AckUpdate(token, masterID, slave.SlaveID, eventID, "applied")
 		if err != nil {
+			if allowRebootstrap && s.resetInvalidControllerToken(err) {
+				return s.syncSlavesWithMasterLocked(false)
+			}
 			res.Failed++
 			if firstErr == nil {
 				firstErr = fmt.Errorf("update ack failed for slave_id=%s: %w", slave.SlaveID, err)
@@ -516,9 +549,12 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 		token = nextToken
 		if err := s.state.SetToken(token); err != nil {
 			log.Printf("worker: failed to persist rotated token after ack: %v", err)
+		} else {
+			log.Printf("worker: update ack succeeded for slave_id=%s and controller token rotated", slave.SlaveID)
 		}
 		res.UpdatesSent++
 		_ = s.state.MarkSlaveSynced(slave.SlaveID, st.CurrentVaultVersion, eventID)
+		log.Printf("worker: slave_id=%s synced successfully to version=%d", slave.SlaveID, st.CurrentVaultVersion)
 	}
 
 	if firstErr != nil {
@@ -527,6 +563,22 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 	}
 	s.setSuccess()
 	return res, nil
+}
+
+func (s *Server) resetInvalidControllerToken(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	if !strings.Contains(msg, "status=401") && !strings.Contains(msg, "controller token is invalid or controller is inactive") {
+		return false
+	}
+	if clearErr := s.state.SetToken(""); clearErr != nil {
+		log.Printf("worker: failed to clear invalid controller token: %v", clearErr)
+		return false
+	}
+	log.Printf("worker: cleared invalid controller token after auth failure, will retry bootstrap")
+	return true
 }
 
 func (s *Server) setAttempt(at time.Time) {

@@ -2,7 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +16,7 @@ type fakeMaster struct {
 	controllers    []master.ControllerInfo
 	nextToken      string
 	listErr        error
+	listRejectToken string
 	pairErrFor     map[string]error
 	pairCalls      []string
 	applyCalls     []string
@@ -34,6 +37,9 @@ func (f *fakeMaster) Bootstrap(controllerID string, masterKey string) (string, e
 }
 
 func (f *fakeMaster) ListControllers(token string) ([]master.ControllerInfo, string, error) {
+	if strings.TrimSpace(token) != "" && token == f.listRejectToken {
+		return nil, "", errors.New("list controllers failed: status=401 body=controller token is invalid or controller is inactive")
+	}
 	if f.listErr != nil {
 		return nil, "", f.listErr
 	}
@@ -267,5 +273,59 @@ func TestSyncSlavesWithMasterAutoBootstrapPendingApproval(t *testing.T) {
 	}
 	if status.ConsecutiveFailures != 0 {
 		t.Fatalf("expected no failure increment on pending approval, got %d", status.ConsecutiveFailures)
+	}
+}
+
+func TestSyncSlavesWithMasterRebootstrapsAfterInvalidStoredToken(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewStateStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatalf("NewStateStore error: %v", err)
+	}
+	if err := store.SetToken("stale-token"); err != nil {
+		t.Fatalf("SetToken error: %v", err)
+	}
+	if err := store.UpsertSlave(SlaveRegistration{
+		SlaveID:      "slave-1",
+		SlaveURL:     "http://10.0.0.1:8080",
+		ControllerID: "controller-01",
+		RegisteredAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertSlave error: %v", err)
+	}
+
+	fm := &fakeMaster{
+		controllers: []master.ControllerInfo{
+			{ID: "controller-01", Status: "active"},
+		},
+		nextToken:       "token-after-rebootstrap",
+		listRejectToken: "stale-token",
+		bootstrapToken:  "fresh-token",
+		snapshot: master.SnapshotExport{
+			SnapshotVersion: 1,
+			Snapshot:        json.RawMessage(`{"version":1,"created_at":"2026-03-10T00:00:00Z","users":[],"passwords":[],"notes":[],"password_shares":[],"note_shares":[]}`),
+		},
+	}
+
+	srv := New(config.Config{
+		ControllerID: "controller-01",
+		Master:       config.MasterConfig{MasterKey: "key-1"},
+	}, fm, store)
+
+	res, err := srv.syncSlavesWithMaster()
+	if err != nil {
+		t.Fatalf("syncSlavesWithMaster error: %v", err)
+	}
+	if res.Attempted != 1 || res.Paired != 1 || res.UpdatesSent != 1 {
+		t.Fatalf("expected one recovered sync, got %+v", res)
+	}
+	if fm.bootstrapCalls != 1 {
+		t.Fatalf("expected one bootstrap after stale token, got %d", fm.bootstrapCalls)
+	}
+
+	st := store.Snapshot()
+	if st.CurrentToken != "token-after-rebootstrap" {
+		t.Fatalf("expected rotated token after rebootstrap, got %q", st.CurrentToken)
 	}
 }
