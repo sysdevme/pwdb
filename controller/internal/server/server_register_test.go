@@ -27,26 +27,30 @@ func (s *registerMasterStub) ListControllers(token string) ([]master.ControllerI
 	return s.controllers, s.nextToken, nil
 }
 
-func (s *registerMasterStub) PairSlave(slaveID string, slaveURL string) error {
+func (s *registerMasterStub) PairSlave(token string, slaveID string, slaveURL string) (string, error) {
 	s.pairSlaveID = slaveID
 	s.pairURL = slaveURL
+	return s.nextToken, nil
+}
+
+func (s *registerMasterStub) ApplyUpdateToSlave(slaveURL string, grantToken string, masterServerID string, eventID string, vaultVersion int64, payloadHash string) error {
 	return nil
 }
 
-func (s *registerMasterStub) ApplyUpdateToSlave(slaveURL string, masterServerID string, eventID string, vaultVersion int64, payloadHash string) error {
+func (s *registerMasterStub) ExportSnapshot(token string) (master.SnapshotExport, string, error) {
+	return master.SnapshotExport{}, s.nextToken, nil
+}
+
+func (s *registerMasterStub) IssueSlaveGrant(token string, slaveURL string) (string, string, error) {
+	return "grant-token", s.nextToken, nil
+}
+
+func (s *registerMasterStub) ApplySnapshotToSlave(slaveURL string, grantToken string, masterServerID string, masterURL string, snapshot master.SnapshotExport) error {
 	return nil
 }
 
-func (s *registerMasterStub) ExportSnapshot() (master.SnapshotExport, error) {
-	return master.SnapshotExport{}, nil
-}
-
-func (s *registerMasterStub) ApplySnapshotToSlave(slaveURL string, masterServerID string, masterURL string, snapshot master.SnapshotExport) error {
-	return nil
-}
-
-func (s *registerMasterStub) AckUpdate(masterServerID string, slaveID string, eventID string, statusValue string) error {
-	return nil
+func (s *registerMasterStub) AckUpdate(token string, masterServerID string, slaveID string, eventID string, statusValue string) (string, error) {
+	return s.nextToken, nil
 }
 
 func TestHandleRegisterSlaveAppliesDefaultPort(t *testing.T) {

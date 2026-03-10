@@ -40,7 +40,7 @@ const userCtxKey ctxKey = 1
 const (
 	defaultPageSize               = 10
 	defaultUnlockMinutes          = 5
-	defaultAppVersion             = "4.0.8"
+	defaultAppVersion             = "4.0.9"
 	defaultBuildAuthor            = "unknown"
 	defaultBuildLastUpdate        = "unknown"
 	controllerHealthcheckInterval = 30 * time.Second
@@ -166,6 +166,14 @@ type controllerBootstrapAuthRequest struct {
 
 type controllerRotateAuthRequest struct {
 	ControllerID string `json:"controller_id"`
+}
+
+type controllerSlaveGrantRequest struct {
+	SlaveEndpoint string `json:"slave_endpoint"`
+}
+
+type controllerSlaveGrantVerifyRequest struct {
+	GrantToken string `json:"grant_token"`
 }
 
 type controllerAuthTokenResponse struct {
@@ -297,6 +305,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/setup", s.handleSetup)
 	mux.HandleFunc("/controller/auth/bootstrap", s.handleControllerAuthBootstrap)
 	mux.HandleFunc("/controller/auth/rotate", s.handleControllerAuthRotate)
+	mux.HandleFunc("/controller/auth/slave-grant", s.handleControllerAuthSlaveGrant)
+	mux.HandleFunc("/controller/auth/verify-slave-grant", s.handleControllerAuthVerifySlaveGrant)
 	mux.HandleFunc("/controller/controllers", s.handleControllerListControllers)
 	mux.HandleFunc("/controller/health", s.handleControllerHealth)
 	mux.HandleFunc("/controller/pair", s.handleControllerPair)
@@ -365,6 +375,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/admin/controllers/cleanup-stale", s.handleAdminCleanupStaleControllers)
 	mux.HandleFunc("/admin/controller-links/cleanup", s.handleAdminCleanupControllerLinks)
 	mux.HandleFunc("/admin/request-logs", s.handleAdminRequestLogs)
+	mux.HandleFunc("/admin/controller-links/status", s.handleAdminControllerLinksStatus)
 	mux.HandleFunc("/admin/service/restart", s.handleAdminServiceRestart)
 	mux.HandleFunc("/admin/records/clear-tags", s.handleAdminClearRecordTags)
 	mux.HandleFunc("/admin/records/clear-groups", s.handleAdminClearRecordGroups)
@@ -592,18 +603,62 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-func (s *Server) authorizeController(w http.ResponseWriter, r *http.Request) bool {
-	expected := strings.TrimSpace(os.Getenv("CONTROLLER_SHARED_TOKEN"))
-	if expected == "" {
-		http.Error(w, "controller auth is not configured", http.StatusServiceUnavailable)
-		return false
+func (s *Server) authorizeRotatingController(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	token := bearerTokenFromRequest(r)
+	if token == "" {
+		http.Error(w, "missing bearer token", http.StatusUnauthorized)
+		return "", "", false
 	}
-	got := strings.TrimSpace(r.Header.Get("X-Controller-Token"))
-	if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return false
+	nextToken, err := randomToken()
+	if err != nil {
+		http.Error(w, "failed to issue token", http.StatusInternalServerError)
+		return "", "", false
 	}
-	return true
+	controllerID, err := s.store.RotateControllerTokenByHash(r.Context(), hashControllerToken(token), hashControllerToken(nextToken))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return "", "", false
+	}
+	return controllerID, nextToken, true
+}
+
+func (s *Server) verifyControllerSlaveGrant(ctx context.Context, masterBaseURL string, grantToken string) (string, error) {
+	base := strings.TrimRight(strings.TrimSpace(masterBaseURL), "/")
+	grantToken = strings.TrimSpace(grantToken)
+	if base == "" {
+		return "", errors.New("master URL is not configured")
+	}
+	if grantToken == "" {
+		return "", errors.New("missing controller grant")
+	}
+	body, err := json.Marshal(controllerSlaveGrantVerifyRequest{GrantToken: grantToken})
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/controller/auth/verify-slave-grant", strings.NewReader(string(body)))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.controllerHTTPClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("controller grant verification failed: %s", strings.TrimSpace(string(msg)))
+	}
+	var payload struct {
+		ControllerID string `json:"controller_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.ControllerID) == "" {
+		return "", errors.New("controller grant verification returned empty controller_id")
+	}
+	return strings.TrimSpace(payload.ControllerID), nil
 }
 
 func hashControllerToken(token string) string {
@@ -751,12 +806,76 @@ func (s *Server) handleControllerListControllers(w http.ResponseWriter, r *http.
 	})
 }
 
-func (s *Server) handleControllerHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+func (s *Server) handleControllerAuthSlaveGrant(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.authorizeController(w, r) {
+	controllerID, nextToken, ok := s.authorizeRotatingController(w, r)
+	if !ok {
+		return
+	}
+	var req controllerSlaveGrantRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	req.SlaveEndpoint = strings.TrimSpace(req.SlaveEndpoint)
+	if req.SlaveEndpoint == "" {
+		http.Error(w, "slave_endpoint is required", http.StatusBadRequest)
+		return
+	}
+	grantToken, err := randomToken()
+	if err != nil {
+		http.Error(w, "failed to issue slave grant", http.StatusInternalServerError)
+		return
+	}
+	expiresAt := time.Now().UTC().Add(30 * time.Second)
+	if err := s.store.IssueControllerSlaveGrant(r.Context(), controllerID, req.SlaveEndpoint, hashControllerToken(grantToken), expiresAt); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":         "grant_issued",
+		"controller_id":  controllerID,
+		"slave_endpoint": req.SlaveEndpoint,
+		"grant_token":    grantToken,
+		"expires_at":     expiresAt.Format(time.RFC3339),
+		"next_token":     nextToken,
+	})
+}
+
+func (s *Server) handleControllerAuthVerifySlaveGrant(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req controllerSlaveGrantVerifyRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	req.GrantToken = strings.TrimSpace(req.GrantToken)
+	if req.GrantToken == "" {
+		http.Error(w, "grant_token is required", http.StatusBadRequest)
+		return
+	}
+	controllerID, slaveEndpoint, expiresAt, err := s.store.ConsumeControllerSlaveGrant(r.Context(), hashControllerToken(req.GrantToken))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":         "approved",
+		"controller_id":  controllerID,
+		"slave_endpoint": slaveEndpoint,
+		"expires_at":     expiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+func (s *Server) handleControllerHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	profile, err := s.store.GetServerProfile(r.Context())
@@ -781,7 +900,8 @@ func (s *Server) handleControllerPair(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.authorizeController(w, r) {
+	controllerID, nextToken, ok := s.authorizeRotatingController(w, r)
+	if !ok {
 		return
 	}
 	profile, err := s.store.GetServerProfile(r.Context())
@@ -806,15 +926,14 @@ func (s *Server) handleControllerPair(w http.ResponseWriter, r *http.Request) {
 		"status":          "paired",
 		"master_mode":     profile.ServerMode,
 		"slave_server_id": strings.TrimSpace(req.SlaveServerID),
+		"controller_id":   controllerID,
+		"next_token":      nextToken,
 	})
 }
 
 func (s *Server) handleControllerLinksStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !s.authorizeController(w, r) {
 		return
 	}
 	profile, err := s.store.GetServerProfile(r.Context())
@@ -836,14 +955,6 @@ func (s *Server) handleControllerLinksStatus(w http.ResponseWriter, r *http.Requ
 	stale := 0
 	offline := 0
 	latestHandshakeAt := time.Time{}
-	type row struct {
-		SlaveServerID   string `json:"slave_server_id"`
-		SlaveEndpoint   string `json:"slave_endpoint"`
-		Status          string `json:"status"`
-		Health          string `json:"health"`
-		LastHandshakeAt string `json:"last_handshake_at"`
-	}
-	rows := make([]row, 0, len(links))
 	for _, link := range links {
 		health := classifyControllerLinkHealth(link.Status, link.LastHandshakeAt, now)
 		switch health {
@@ -857,13 +968,6 @@ func (s *Server) handleControllerLinksStatus(w http.ResponseWriter, r *http.Requ
 		if link.LastHandshakeAt.After(latestHandshakeAt) {
 			latestHandshakeAt = link.LastHandshakeAt
 		}
-		rows = append(rows, row{
-			SlaveServerID:   link.SlaveServerID,
-			SlaveEndpoint:   link.SlaveEndpoint,
-			Status:          link.Status,
-			Health:          health,
-			LastHandshakeAt: formatAdminTimestamp(link.LastHandshakeAt),
-		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":      "ok",
@@ -875,8 +979,57 @@ func (s *Server) handleControllerLinksStatus(w http.ResponseWriter, r *http.Requ
 			"offline_links":       offline,
 			"latest_handshake_at": formatAdminTimestamp(latestHandshakeAt),
 		},
-		"links":      rows,
 		"checked_at": now.UTC().Format(time.RFC3339),
+	})
+}
+
+func (s *Server) handleAdminControllerLinksStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.currentUser(r)
+	if !ok || !user.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	profile, err := s.store.GetServerProfile(r.Context())
+	if err != nil {
+		http.Error(w, "server profile is not initialized", http.StatusConflict)
+		return
+	}
+	if profile.ServerMode != "AS-M" {
+		http.Error(w, "link status is allowed only on AS-M", http.StatusConflict)
+		return
+	}
+	links, err := s.store.ListControllerLinks(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	now := time.Now()
+	type row struct {
+		SlaveServerID   string `json:"slave_server_id"`
+		SlaveEndpoint   string `json:"slave_endpoint"`
+		Status          string `json:"status"`
+		Health          string `json:"health"`
+		LastHandshakeAt string `json:"last_handshake_at"`
+	}
+	rows := make([]row, 0, len(links))
+	for _, link := range links {
+		rows = append(rows, row{
+			SlaveServerID:   link.SlaveServerID,
+			SlaveEndpoint:   link.SlaveEndpoint,
+			Status:          link.Status,
+			Health:          classifyControllerLinkHealth(link.Status, link.LastHandshakeAt, now),
+			LastHandshakeAt: formatAdminTimestamp(link.LastHandshakeAt),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":      "ok",
+		"master_mode": profile.ServerMode,
+		"links":       rows,
+		"checked_at":  now.UTC().Format(time.RFC3339),
 	})
 }
 
@@ -905,10 +1058,6 @@ func (s *Server) runControllerLinkHealthcheck() {
 	if err != nil || len(links) == 0 {
 		return
 	}
-	token := strings.TrimSpace(os.Getenv("CONTROLLER_SHARED_TOKEN"))
-	if token == "" {
-		return
-	}
 	for _, link := range links {
 		slaveID := strings.TrimSpace(link.SlaveServerID)
 		endpoint := strings.TrimSpace(link.SlaveEndpoint)
@@ -920,7 +1069,6 @@ func (s *Server) runControllerLinkHealthcheck() {
 		if err != nil {
 			continue
 		}
-		req.Header.Set("X-Controller-Token", token)
 		resp, err := s.controllerHTTPClient.Do(req)
 		if err != nil {
 			continue
@@ -1352,7 +1500,8 @@ func (s *Server) handleControllerSnapshotExport(w http.ResponseWriter, r *http.R
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.authorizeController(w, r) {
+	controllerID, nextToken, ok := s.authorizeRotatingController(w, r)
+	if !ok {
 		return
 	}
 	profile, err := s.store.GetServerProfile(r.Context())
@@ -1375,6 +1524,8 @@ func (s *Server) handleControllerSnapshotExport(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
+		"controller_id":    controllerID,
+		"next_token":       nextToken,
 		"status":           "snapshot_exported",
 		"snapshot_version": snapshot.Version,
 		"payload_hash":     hash,
@@ -1385,9 +1536,6 @@ func (s *Server) handleControllerSnapshotExport(w http.ResponseWriter, r *http.R
 func (s *Server) handleControllerSnapshotApply(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !s.authorizeController(w, r) {
 		return
 	}
 	profile, err := s.store.GetServerProfile(r.Context())
@@ -1402,6 +1550,14 @@ func (s *Server) handleControllerSnapshotApply(w http.ResponseWriter, r *http.Re
 	var req controllerSnapshotApplyRequest
 	if err := decodeJSONBody(r, &req); err != nil {
 		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	masterBaseURL := strings.TrimSpace(profile.LinkedMasterURL)
+	if masterBaseURL == "" {
+		masterBaseURL = strings.TrimSpace(req.MasterURL)
+	}
+	if _, err := s.verifyControllerSlaveGrant(r.Context(), masterBaseURL, r.Header.Get("X-Controller-Grant")); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 	if req.SnapshotVersion <= 0 || strings.TrimSpace(req.MasterURL) == "" {
@@ -1464,7 +1620,8 @@ func (s *Server) handleControllerSyncBundlesExport(w http.ResponseWriter, r *htt
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.authorizeController(w, r) {
+	controllerID, nextToken, ok := s.authorizeRotatingController(w, r)
+	if !ok {
 		return
 	}
 	profile, err := s.store.GetServerProfile(r.Context())
@@ -1501,18 +1658,17 @@ func (s *Server) handleControllerSyncBundlesExport(w http.ResponseWriter, r *htt
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":  "sync_bundle_exported",
-		"user_id": user.ID,
-		"bundle":  bundle,
+		"status":        "sync_bundle_exported",
+		"user_id":       user.ID,
+		"bundle":        bundle,
+		"controller_id": controllerID,
+		"next_token":    nextToken,
 	})
 }
 
 func (s *Server) handleControllerSyncBundlesApply(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !s.authorizeController(w, r) {
 		return
 	}
 	profile, err := s.store.GetServerProfile(r.Context())
@@ -1527,6 +1683,14 @@ func (s *Server) handleControllerSyncBundlesApply(w http.ResponseWriter, r *http
 	var req controllerSyncBundlesApplyRequest
 	if err := decodeJSONBody(r, &req); err != nil {
 		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	masterBaseURL := strings.TrimSpace(profile.LinkedMasterURL)
+	if masterBaseURL == "" {
+		masterBaseURL = strings.TrimSpace(req.MasterURL)
+	}
+	if _, err := s.verifyControllerSlaveGrant(r.Context(), masterBaseURL, r.Header.Get("X-Controller-Grant")); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 	inserted := 0
@@ -1590,9 +1754,6 @@ func (s *Server) handleControllerUpdateApply(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.authorizeController(w, r) {
-		return
-	}
 	profile, err := s.store.GetServerProfile(r.Context())
 	if err != nil {
 		http.Error(w, "server profile is not initialized", http.StatusConflict)
@@ -1605,6 +1766,10 @@ func (s *Server) handleControllerUpdateApply(w http.ResponseWriter, r *http.Requ
 	var req controllerUpdateApplyRequest
 	if err := decodeJSONBody(r, &req); err != nil {
 		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.verifyControllerSlaveGrant(r.Context(), profile.LinkedMasterURL, r.Header.Get("X-Controller-Grant")); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 	inserted, err := s.store.InsertControllerUpdateEvent(
@@ -1632,7 +1797,8 @@ func (s *Server) handleControllerUpdateAck(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.authorizeController(w, r) {
+	controllerID, nextToken, ok := s.authorizeRotatingController(w, r)
+	if !ok {
 		return
 	}
 	profile, err := s.store.GetServerProfile(r.Context())
@@ -1664,8 +1830,10 @@ func (s *Server) handleControllerUpdateAck(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":   "ack_received",
-		"event_id": strings.TrimSpace(req.EventID),
+		"status":        "ack_received",
+		"event_id":      strings.TrimSpace(req.EventID),
+		"controller_id": controllerID,
+		"next_token":    nextToken,
 	})
 }
 
@@ -3636,17 +3804,11 @@ func (s *Server) fetchRemoteMasterLinkStatus(masterBaseURL string) adminRemoteMa
 		out.Error = "master URL is empty"
 		return out
 	}
-	token := strings.TrimSpace(os.Getenv("CONTROLLER_SHARED_TOKEN"))
-	if token == "" {
-		out.Error = "CONTROLLER_SHARED_TOKEN is not configured"
-		return out
-	}
 	req, err := http.NewRequest(http.MethodGet, base+"/controller/links/status", nil)
 	if err != nil {
 		out.Error = err.Error()
 		return out
 	}
-	req.Header.Set("X-Controller-Token", token)
 	resp, err := s.controllerHTTPClient.Do(req)
 	if err != nil {
 		out.Error = err.Error()

@@ -1,7 +1,7 @@
 # Password Manager (Go) - Unified README
 
 Default development branch: `v4`.
-Current release tag: `4.0.8`.
+Current release tag: `4.0.9`.
 
 This repository now combines:
 
@@ -25,6 +25,14 @@ It is not production-ready and should not be exposed directly to the public inte
 - Server-side crypto with Argon2id + AES-GCM
 - Optional distributed topology (`AS-M`/`AS-S`) via controller APIs (experimental)
 - Embedded controller service source at `controller/`
+
+## Controller auth flow
+
+As of `4.0.9`, controller auth is split into three paths:
+
+- Controller -> master operational calls use a rotating per-controller bearer token after bootstrap approval.
+- Controller -> slave apply calls use a one-time short-lived slave grant issued by master.
+- Health/status endpoints are read-only and no longer carry controller secrets.
 
 ## Quick start
 

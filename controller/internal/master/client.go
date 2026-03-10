@@ -22,6 +22,7 @@ type Client struct {
 	baseURL            string
 	bootstrap          string
 	rotate             string
+	slaveGrantPath     string
 	listPath           string
 	pairPath           string
 	snapshotExportPath string
@@ -32,11 +33,12 @@ type Client struct {
 	http               *http.Client
 }
 
-func New(baseURL string, timeout time.Duration, bootstrapPath string, rotatePath string, listPath string, pairPath string, snapshotExportPath string, snapshotApplyPath string, updateAckPath string, updateApplyPath string, sharedToken string) *Client {
+func New(baseURL string, timeout time.Duration, bootstrapPath string, rotatePath string, slaveGrantPath string, listPath string, pairPath string, snapshotExportPath string, snapshotApplyPath string, updateAckPath string, updateApplyPath string, sharedToken string) *Client {
 	return &Client{
 		baseURL:            strings.TrimRight(baseURL, "/"),
 		bootstrap:          bootstrapPath,
 		rotate:             rotatePath,
+		slaveGrantPath:     slaveGrantPath,
 		listPath:           listPath,
 		pairPath:           pairPath,
 		snapshotExportPath: snapshotExportPath,
@@ -151,22 +153,26 @@ type pairReq struct {
 	SlaveEndpoint string `json:"slave_endpoint"`
 }
 
-func (c *Client) PairSlave(slaveID string, slaveURL string) error {
-	if c.sharedToken == "" {
-		return fmt.Errorf("master.shared_token is required for pair relay")
-	}
+func (c *Client) PairSlave(token string, slaveID string, slaveURL string) (string, error) {
 	payload := pairReq{
 		SlaveServerID: strings.TrimSpace(slaveID),
 		SlaveEndpoint: strings.TrimSpace(slaveURL),
 	}
-	respBody, status, err := c.postJSONWithControllerToken(c.pairPath, payload, c.sharedToken)
+	respBody, status, err := c.postJSON(c.pairPath, payload, token)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("pair failed: status=%d body=%s", status, strings.TrimSpace(string(respBody)))
+		return "", fmt.Errorf("pair failed: status=%d body=%s", status, strings.TrimSpace(string(respBody)))
 	}
-	return nil
+	var tr tokenResp
+	if err := json.Unmarshal(respBody, &tr); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(tr.NextToken) == "" {
+		return "", fmt.Errorf("pair response missing next_token")
+	}
+	return tr.NextToken, nil
 }
 
 type updateApplyReq struct {
@@ -189,26 +195,32 @@ type snapshotExportResp struct {
 	Snapshot        json.RawMessage `json:"snapshot"`
 }
 
-func (c *Client) ExportSnapshot() (SnapshotExport, error) {
-	if c.sharedToken == "" {
-		return SnapshotExport{}, fmt.Errorf("master.shared_token is required for snapshot export")
-	}
-	respBody, status, err := c.getWithControllerToken(c.snapshotExportPath, c.sharedToken)
+func (c *Client) ExportSnapshot(token string) (SnapshotExport, string, error) {
+	respBody, status, err := c.get(c.snapshotExportPath, token)
 	if err != nil {
-		return SnapshotExport{}, err
+		return SnapshotExport{}, "", err
 	}
 	if status != http.StatusOK {
-		return SnapshotExport{}, fmt.Errorf("snapshot export failed: status=%d body=%s", status, strings.TrimSpace(string(respBody)))
+		return SnapshotExport{}, "", fmt.Errorf("snapshot export failed: status=%d body=%s", status, strings.TrimSpace(string(respBody)))
 	}
-	var resp snapshotExportResp
+	var resp struct {
+		Status          string          `json:"status"`
+		SnapshotVersion int64           `json:"snapshot_version"`
+		PayloadHash     string          `json:"payload_hash"`
+		Snapshot        json.RawMessage `json:"snapshot"`
+		NextToken       string          `json:"next_token"`
+	}
 	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return SnapshotExport{}, err
+		return SnapshotExport{}, "", err
+	}
+	if strings.TrimSpace(resp.NextToken) == "" {
+		return SnapshotExport{}, "", fmt.Errorf("snapshot export response missing next_token")
 	}
 	return SnapshotExport{
 		SnapshotVersion: resp.SnapshotVersion,
 		PayloadHash:     strings.TrimSpace(resp.PayloadHash),
 		Snapshot:        resp.Snapshot,
-	}, nil
+	}, resp.NextToken, nil
 }
 
 type snapshotApplyReq struct {
@@ -219,10 +231,38 @@ type snapshotApplyReq struct {
 	Snapshot        json.RawMessage `json:"snapshot"`
 }
 
-func (c *Client) ApplySnapshotToSlave(slaveURL string, masterServerID string, masterURL string, snapshot SnapshotExport) error {
-	if c.sharedToken == "" {
-		return fmt.Errorf("master.shared_token is required for slave snapshot relay")
+type slaveGrantReq struct {
+	SlaveEndpoint string `json:"slave_endpoint"`
+}
+
+type slaveGrantResp struct {
+	GrantToken string `json:"grant_token"`
+	NextToken  string `json:"next_token"`
+}
+
+func (c *Client) IssueSlaveGrant(token string, slaveURL string) (string, string, error) {
+	payload := slaveGrantReq{SlaveEndpoint: strings.TrimSpace(slaveURL)}
+	respBody, status, err := c.postJSON(c.slaveGrantPath, payload, token)
+	if err != nil {
+		return "", "", err
 	}
+	if status != http.StatusOK {
+		return "", "", fmt.Errorf("slave grant failed: status=%d body=%s", status, strings.TrimSpace(string(respBody)))
+	}
+	var resp slaveGrantResp
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(resp.GrantToken) == "" {
+		return "", "", fmt.Errorf("slave grant response missing grant_token")
+	}
+	if strings.TrimSpace(resp.NextToken) == "" {
+		return "", "", fmt.Errorf("slave grant response missing next_token")
+	}
+	return strings.TrimSpace(resp.GrantToken), strings.TrimSpace(resp.NextToken), nil
+}
+
+func (c *Client) ApplySnapshotToSlave(slaveURL string, grantToken string, masterServerID string, masterURL string, snapshot SnapshotExport) error {
 	base := strings.TrimRight(strings.TrimSpace(slaveURL), "/")
 	if base == "" {
 		return fmt.Errorf("slave_url is required")
@@ -234,7 +274,7 @@ func (c *Client) ApplySnapshotToSlave(slaveURL string, masterServerID string, ma
 		PayloadHash:     strings.TrimSpace(snapshot.PayloadHash),
 		Snapshot:        snapshot.Snapshot,
 	}
-	respBody, status, err := c.postJSONWithControllerTokenToBase(base, c.snapshotApplyPath, payload, c.sharedToken)
+	respBody, status, err := c.postJSONWithGrantToBase(base, c.snapshotApplyPath, payload, grantToken)
 	if err != nil {
 		return err
 	}
@@ -244,10 +284,7 @@ func (c *Client) ApplySnapshotToSlave(slaveURL string, masterServerID string, ma
 	return nil
 }
 
-func (c *Client) ApplyUpdateToSlave(slaveURL string, masterServerID string, eventID string, vaultVersion int64, payloadHash string) error {
-	if c.sharedToken == "" {
-		return fmt.Errorf("master.shared_token is required for slave update relay")
-	}
+func (c *Client) ApplyUpdateToSlave(slaveURL string, grantToken string, masterServerID string, eventID string, vaultVersion int64, payloadHash string) error {
 	payload := updateApplyReq{
 		MasterServerID: strings.TrimSpace(masterServerID),
 		EventID:        strings.TrimSpace(eventID),
@@ -258,7 +295,7 @@ func (c *Client) ApplyUpdateToSlave(slaveURL string, masterServerID string, even
 	if base == "" {
 		return fmt.Errorf("slave_url is required")
 	}
-	respBody, status, err := c.postJSONWithControllerTokenToBase(base, c.updateApplyPath, payload, c.sharedToken)
+	respBody, status, err := c.postJSONWithGrantToBase(base, c.updateApplyPath, payload, grantToken)
 	if err != nil {
 		return err
 	}
@@ -275,24 +312,28 @@ type updateAckReq struct {
 	Status         string `json:"status"`
 }
 
-func (c *Client) AckUpdate(masterServerID string, slaveID string, eventID string, statusValue string) error {
-	if c.sharedToken == "" {
-		return fmt.Errorf("master.shared_token is required for update ack")
-	}
+func (c *Client) AckUpdate(token string, masterServerID string, slaveID string, eventID string, statusValue string) (string, error) {
 	payload := updateAckReq{
 		MasterServerID: strings.TrimSpace(masterServerID),
 		SlaveServerID:  strings.TrimSpace(slaveID),
 		EventID:        strings.TrimSpace(eventID),
 		Status:         strings.TrimSpace(statusValue),
 	}
-	respBody, status, err := c.postJSONWithControllerToken(c.updateAckPath, payload, c.sharedToken)
+	respBody, status, err := c.postJSON(c.updateAckPath, payload, token)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("update ack failed: status=%d body=%s", status, strings.TrimSpace(string(respBody)))
+		return "", fmt.Errorf("update ack failed: status=%d body=%s", status, strings.TrimSpace(string(respBody)))
 	}
-	return nil
+	var tr tokenResp
+	if err := json.Unmarshal(respBody, &tr); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(tr.NextToken) == "" {
+		return "", fmt.Errorf("update ack response missing next_token")
+	}
+	return tr.NextToken, nil
 }
 
 func (c *Client) postJSON(path string, payload any, token string) ([]byte, int, error) {
@@ -335,6 +376,29 @@ func (c *Client) postJSONWithControllerTokenToBase(baseURL string, path string, 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Controller-Token", strings.TrimSpace(controllerToken))
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, err
+	}
+	return body, resp.StatusCode, nil
+}
+
+func (c *Client) postJSONWithGrantToBase(baseURL string, path string, payload any, grantToken string) ([]byte, int, error) {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return nil, 0, err
+	}
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+path, bytes.NewReader(b))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Controller-Grant", strings.TrimSpace(grantToken))
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, 0, err

@@ -776,6 +776,38 @@ func (s *Store) CleanupControllerLinkDuplicateEndpoints(ctx context.Context) (in
 	return tag.RowsAffected(), nil
 }
 
+func (s *Store) IssueControllerSlaveGrant(ctx context.Context, controllerID string, slaveEndpoint string, grantTokenHash string, expiresAt time.Time) error {
+	controllerID = strings.TrimSpace(controllerID)
+	slaveEndpoint = strings.TrimSpace(slaveEndpoint)
+	grantTokenHash = strings.TrimSpace(grantTokenHash)
+	if controllerID == "" || slaveEndpoint == "" || grantTokenHash == "" {
+		return errors.New("controller_id, slave_endpoint and grant_token_hash are required")
+	}
+	if expiresAt.IsZero() {
+		return errors.New("expires_at is required")
+	}
+	_, err := s.pool.Exec(ctx, sqlInsertControllerSlaveGrant, uuid.New(), controllerID, slaveEndpoint, grantTokenHash, expiresAt.UTC())
+	return err
+}
+
+func (s *Store) ConsumeControllerSlaveGrant(ctx context.Context, grantTokenHash string) (string, string, time.Time, error) {
+	grantTokenHash = strings.TrimSpace(grantTokenHash)
+	if grantTokenHash == "" {
+		return "", "", time.Time{}, errors.New("grant_token_hash is required")
+	}
+	var controllerID string
+	var slaveEndpoint string
+	var expiresAt time.Time
+	err := s.pool.QueryRow(ctx, sqlConsumeControllerSlaveGrant, grantTokenHash).Scan(&controllerID, &slaveEndpoint, &expiresAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", "", time.Time{}, errors.New("controller slave grant is invalid or expired")
+		}
+		return "", "", time.Time{}, err
+	}
+	return controllerID, slaveEndpoint, expiresAt, nil
+}
+
 func (s *Store) InsertControllerUpdateEvent(ctx context.Context, eventID string, masterServerID string, vaultVersion int64, payloadHash string, status string) (bool, error) {
 	eventID = strings.TrimSpace(eventID)
 	masterServerID = strings.TrimSpace(masterServerID)

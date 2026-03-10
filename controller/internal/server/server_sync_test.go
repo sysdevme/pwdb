@@ -40,31 +40,35 @@ func (f *fakeMaster) ListControllers(token string) ([]master.ControllerInfo, str
 	return f.controllers, f.nextToken, nil
 }
 
-func (f *fakeMaster) PairSlave(slaveID string, slaveURL string) error {
+func (f *fakeMaster) PairSlave(token string, slaveID string, slaveURL string) (string, error) {
 	f.pairCalls = append(f.pairCalls, slaveID)
 	if err := f.pairErrFor[slaveID]; err != nil {
-		return err
+		return "", err
 	}
-	return nil
+	return f.nextToken, nil
 }
 
-func (f *fakeMaster) ExportSnapshot() (master.SnapshotExport, error) {
+func (f *fakeMaster) ExportSnapshot(token string) (master.SnapshotExport, string, error) {
 	f.exportCalls++
-	return f.snapshot, nil
+	return f.snapshot, f.nextToken, nil
 }
 
-func (f *fakeMaster) ApplySnapshotToSlave(slaveURL string, masterServerID string, masterURL string, snapshot master.SnapshotExport) error {
+func (f *fakeMaster) IssueSlaveGrant(token string, slaveURL string) (string, string, error) {
+	return "grant-token", f.nextToken, nil
+}
+
+func (f *fakeMaster) ApplySnapshotToSlave(slaveURL string, grantToken string, masterServerID string, masterURL string, snapshot master.SnapshotExport) error {
 	f.applyCalls = append(f.applyCalls, slaveURL)
 	return nil
 }
 
-func (f *fakeMaster) ApplyUpdateToSlave(slaveURL string, masterServerID string, eventID string, vaultVersion int64, payloadHash string) error {
+func (f *fakeMaster) ApplyUpdateToSlave(slaveURL string, grantToken string, masterServerID string, eventID string, vaultVersion int64, payloadHash string) error {
 	return nil
 }
 
-func (f *fakeMaster) AckUpdate(masterServerID string, slaveID string, eventID string, statusValue string) error {
+func (f *fakeMaster) AckUpdate(token string, masterServerID string, slaveID string, eventID string, statusValue string) (string, error) {
 	f.ackCalls = append(f.ackCalls, eventID)
-	return nil
+	return f.nextToken, nil
 }
 
 func TestSyncSlavesWithMasterSuccess(t *testing.T) {

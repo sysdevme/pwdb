@@ -345,6 +345,22 @@ const (
 		  AND COALESCE(last_seen_at, token_updated_at, created_at) < $1
 	`
 
+	sqlInsertControllerSlaveGrant = `
+		INSERT INTO controller_slave_grants (
+			id, controller_id, slave_endpoint, grant_token_hash, expires_at
+		)
+		VALUES ($1, $2, $3, $4, $5)
+	`
+
+	sqlConsumeControllerSlaveGrant = `
+		UPDATE controller_slave_grants
+		SET used_at = NOW()
+		WHERE grant_token_hash = $1
+		  AND used_at IS NULL
+		  AND expires_at > NOW()
+		RETURNING controller_id, slave_endpoint, expires_at
+	`
+
 	sqlCreateUser = `
 		INSERT INTO users (id, email, password_hash, master_password_hash, is_admin, status)
 		VALUES ($1, $2, $3, $4, $5, $6)

@@ -23,11 +23,12 @@ import (
 type masterAPI interface {
 	Bootstrap(controllerID string, masterKey string) (string, error)
 	ListControllers(token string) ([]master.ControllerInfo, string, error)
-	PairSlave(slaveID string, slaveURL string) error
-	ExportSnapshot() (master.SnapshotExport, error)
-	ApplySnapshotToSlave(slaveURL string, masterServerID string, masterURL string, snapshot master.SnapshotExport) error
-	ApplyUpdateToSlave(slaveURL string, masterServerID string, eventID string, vaultVersion int64, payloadHash string) error
-	AckUpdate(masterServerID string, slaveID string, eventID string, statusValue string) error
+	PairSlave(token string, slaveID string, slaveURL string) (string, error)
+	ExportSnapshot(token string) (master.SnapshotExport, string, error)
+	IssueSlaveGrant(token string, slaveURL string) (string, string, error)
+	ApplySnapshotToSlave(slaveURL string, grantToken string, masterServerID string, masterURL string, snapshot master.SnapshotExport) error
+	ApplyUpdateToSlave(slaveURL string, grantToken string, masterServerID string, eventID string, vaultVersion int64, payloadHash string) error
+	AckUpdate(token string, masterServerID string, slaveID string, eventID string, statusValue string) (string, error)
 }
 
 type Server struct {
@@ -266,8 +267,13 @@ func (s *Server) handleRegisterSlave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.master.PairSlave(in.SlaveID, in.SlaveURL); err != nil {
+	pairToken, err := s.master.PairSlave(nextToken, in.SlaveID, in.SlaveURL)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if err := s.state.SetToken(pairToken); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -384,12 +390,14 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 		return res, nil
 	}
 
-	controllers, nextToken, err := s.master.ListControllers(st.CurrentToken)
+	token := st.CurrentToken
+	controllers, nextToken, err := s.master.ListControllers(token)
 	if err != nil {
 		s.setFailure(err)
 		return syncResult{}, err
 	}
-	if err := s.state.SetToken(nextToken); err != nil {
+	token = nextToken
+	if err := s.state.SetToken(token); err != nil {
 		log.Printf("worker: failed to persist rotated token: %v", err)
 	}
 
@@ -413,10 +421,14 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 	})
 
 	res := syncResult{}
-	snapshot, err := s.master.ExportSnapshot()
+	snapshot, nextToken, err := s.master.ExportSnapshot(token)
 	if err != nil {
 		s.setFailure(err)
 		return res, err
+	}
+	token = nextToken
+	if err := s.state.SetToken(token); err != nil {
+		log.Printf("worker: failed to persist rotated token after snapshot export: %v", err)
 	}
 	vaultFingerprint, err := snapshotContentFingerprint(snapshot.Snapshot)
 	if err != nil {
@@ -446,7 +458,8 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 			res.SkippedInactive++
 			continue
 		}
-		if err := s.master.PairSlave(slave.SlaveID, slave.SlaveURL); err != nil {
+		nextToken, err := s.master.PairSlave(token, slave.SlaveID, slave.SlaveURL)
+		if err != nil {
 			res.Failed++
 			if firstErr == nil {
 				firstErr = fmt.Errorf("pair relay failed for slave_id=%s: %w", slave.SlaveID, err)
@@ -455,6 +468,10 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 			log.Printf("worker: pair relay failed for slave_id=%s: %v", slave.SlaveID, err)
 			continue
 		}
+		token = nextToken
+		if err := s.state.SetToken(token); err != nil {
+			log.Printf("worker: failed to persist rotated token after pair relay: %v", err)
+		}
 		res.Paired++
 
 		if slave.LastSyncedVersion >= st.CurrentVaultVersion && st.CurrentVaultVersion > 0 {
@@ -462,7 +479,22 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 			continue
 		}
 
-		if err := s.master.ApplySnapshotToSlave(slave.SlaveURL, masterID, s.cfg.Master.BaseURL, snapshot); err != nil {
+		grantToken, nextToken, err := s.master.IssueSlaveGrant(token, slave.SlaveURL)
+		if err != nil {
+			res.Failed++
+			if firstErr == nil {
+				firstErr = fmt.Errorf("slave grant failed for slave_id=%s: %w", slave.SlaveID, err)
+			}
+			_ = s.state.MarkSlaveSyncError(slave.SlaveID, err.Error())
+			log.Printf("worker: slave grant failed for slave_id=%s: %v", slave.SlaveID, err)
+			continue
+		}
+		token = nextToken
+		if err := s.state.SetToken(token); err != nil {
+			log.Printf("worker: failed to persist rotated token after slave grant: %v", err)
+		}
+
+		if err := s.master.ApplySnapshotToSlave(slave.SlaveURL, grantToken, masterID, s.cfg.Master.BaseURL, snapshot); err != nil {
 			res.Failed++
 			if firstErr == nil {
 				firstErr = fmt.Errorf("snapshot apply failed for slave_id=%s: %w", slave.SlaveID, err)
@@ -471,7 +503,8 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 			log.Printf("worker: snapshot apply failed for slave_id=%s: %v", slave.SlaveID, err)
 			continue
 		}
-		if err := s.master.AckUpdate(masterID, slave.SlaveID, eventID, "applied"); err != nil {
+		nextToken, err = s.master.AckUpdate(token, masterID, slave.SlaveID, eventID, "applied")
+		if err != nil {
 			res.Failed++
 			if firstErr == nil {
 				firstErr = fmt.Errorf("update ack failed for slave_id=%s: %w", slave.SlaveID, err)
@@ -479,6 +512,10 @@ func (s *Server) syncSlavesWithMaster() (syncResult, error) {
 			_ = s.state.MarkSlaveSyncError(slave.SlaveID, err.Error())
 			log.Printf("worker: update ack failed for slave_id=%s: %v", slave.SlaveID, err)
 			continue
+		}
+		token = nextToken
+		if err := s.state.SetToken(token); err != nil {
+			log.Printf("worker: failed to persist rotated token after ack: %v", err)
 		}
 		res.UpdatesSent++
 		_ = s.state.MarkSlaveSynced(slave.SlaveID, st.CurrentVaultVersion, eventID)

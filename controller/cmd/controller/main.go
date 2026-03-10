@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -34,6 +33,7 @@ func main() {
 		time.Duration(cfg.HTTPTimeoutSeconds)*time.Second,
 		cfg.Master.BootstrapPath,
 		cfg.Master.RotatePath,
+		cfg.Master.SlaveGrantPath,
 		cfg.Master.ControllersPath,
 		cfg.Master.PairPath,
 		cfg.Master.SnapshotExportPath,
@@ -54,8 +54,6 @@ func main() {
 }
 
 func validateSecrets(cfg config.Config) error {
-	if config.SecretLooksUnset(cfg.Master.SharedToken) {
-		return fmt.Errorf("controller shared token is required; set CONTROLLER_SHARED_TOKEN or update a local config file")
-	}
+	_ = cfg
 	return nil
 }

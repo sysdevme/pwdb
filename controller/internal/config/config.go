@@ -20,6 +20,7 @@ type MasterConfig struct {
 	MasterKey          string `json:"master_key"`
 	BootstrapPath      string `json:"bootstrap_path"`
 	RotatePath         string `json:"rotate_path"`
+	SlaveGrantPath     string `json:"slave_grant_path"`
 	ControllersPath    string `json:"controllers_path"`
 	PairPath           string `json:"pair_path"`
 	SnapshotExportPath string `json:"snapshot_export_path"`
@@ -99,6 +100,9 @@ func (c *Config) Normalize() error {
 	}
 	if strings.TrimSpace(c.Master.ControllersPath) == "" {
 		c.Master.ControllersPath = "/controller/controllers"
+	}
+	if strings.TrimSpace(c.Master.SlaveGrantPath) == "" {
+		c.Master.SlaveGrantPath = "/controller/auth/slave-grant"
 	}
 	if strings.TrimSpace(c.Master.PairPath) == "" {
 		c.Master.PairPath = "/controller/pair"
