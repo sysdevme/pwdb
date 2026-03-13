@@ -212,7 +212,7 @@ async function saveSettings() {
     state.settings = await callBackend("SaveSettings", settings);
     state.message = "Settings saved locally.";
   } catch (error) {
-    state.error = error.message;
+    state.error = describeError(error);
   }
   render();
 }
@@ -224,7 +224,7 @@ async function testConnection() {
     state.connection = await callBackend("TestConnection", settings);
     state.message = state.connection.reachable ? "Connection test completed." : "";
   } catch (error) {
-    state.error = error.message;
+    state.error = describeError(error);
   }
   render();
 }
@@ -242,7 +242,7 @@ async function login() {
     state.activeTab = "passwords";
     state.message = `Logged in as ${state.session.user?.email || settings.email}.`;
   } catch (error) {
-    state.error = error.message;
+    state.error = describeError(error);
   }
   render();
 }
@@ -265,7 +265,7 @@ async function logout() {
     state.activeTab = "passwords";
     state.message = "Logged out.";
   } catch (error) {
-    state.error = error.message;
+    state.error = describeError(error);
   }
   render();
 }
@@ -277,7 +277,7 @@ async function selectPassword(id) {
   try {
     state.selectedItem = await callBackend("GetPassword", id);
   } catch (error) {
-    state.error = error.message;
+    state.error = describeError(error);
   }
   render();
 }
@@ -289,7 +289,7 @@ async function selectNote(id) {
   try {
     state.selectedItem = await callBackend("GetNote", id);
   } catch (error) {
-    state.error = error.message;
+    state.error = describeError(error);
   }
   render();
 }
@@ -302,7 +302,7 @@ async function unlockPassword() {
     state.unlockedItem = await callBackend("UnlockPassword", state.selectedId, masterPassword);
     state.message = "Secret fields loaded.";
   } catch (error) {
-    state.error = error.message;
+    state.error = describeError(error);
   }
   render();
 }
@@ -315,7 +315,7 @@ async function unlockNote() {
     state.unlockedItem = await callBackend("UnlockNote", state.selectedId, masterPassword);
     state.message = "Note body loaded.";
   } catch (error) {
-    state.error = error.message;
+    state.error = describeError(error);
   }
   render();
 }
@@ -349,6 +349,23 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function describeError(error) {
+  if (!error) {
+    return "Unknown error";
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (typeof error.message === "string" && error.message.trim() !== "") {
+    return error.message;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch (_) {
+    return String(error);
+  }
 }
 
 hydrate();
