@@ -549,17 +549,17 @@ func (s *Server) requireDesktopUser(w http.ResponseWriter, r *http.Request) (mod
 
 func (s *Server) handleDesktopLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	var req desktopLoginRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		http.Error(w, "invalid json body", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid json body: %v", err))
 		return
 	}
 	req.Email = strings.TrimSpace(req.Email)
 	if req.Email == "" || req.Password == "" {
-		http.Error(w, "email and password are required", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "email and password are required")
 		return
 	}
 	clientIP := clientIPFromRequest(r)
@@ -580,7 +580,7 @@ func (s *Server) handleDesktopLogin(w http.ResponseWriter, r *http.Request) {
 	s.clearLoginFailures(clientIP)
 	if user.Status != "active" {
 		if err := s.store.SetUserStatus(r.Context(), user.ID, "active"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		user.Status = "active"
@@ -592,7 +592,7 @@ func (s *Server) handleDesktopLogin(w http.ResponseWriter, r *http.Request) {
 		UserID:    user.ID,
 		ExpiresAt: expiresAt,
 	}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	profile, _ := s.store.GetServerProfile(r.Context())
@@ -614,7 +614,7 @@ func (s *Server) handleDesktopLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDesktopLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	_, sess, ok := s.requireDesktopUser(w, r)
@@ -627,7 +627,7 @@ func (s *Server) handleDesktopLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDesktopPasswords(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	user, _, ok := s.requireDesktopUser(w, r)
@@ -636,7 +636,7 @@ func (s *Server) handleDesktopPasswords(w http.ResponseWriter, r *http.Request) 
 	}
 	items, err := s.store.ListPasswords(r.Context(), user.ID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	response := make([]map[string]any, 0, len(items))
@@ -666,7 +666,7 @@ func (s *Server) handleDesktopPasswordDetail(w http.ResponseWriter, r *http.Requ
 	path := strings.TrimPrefix(r.URL.Path, "/api/desktop/passwords/")
 	path = strings.Trim(path, "/")
 	if path == "" {
-		http.Error(w, "password id is required", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "password id is required")
 		return
 	}
 	if strings.HasSuffix(path, "/unlock") {
@@ -676,12 +676,12 @@ func (s *Server) handleDesktopPasswordDetail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	entry, err := s.store.GetPassword(r.Context(), s.crypto, path, user.ID)
 	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeJSONError(w, http.StatusNotFound, "not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -699,16 +699,16 @@ func (s *Server) handleDesktopPasswordDetail(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handleDesktopPasswordUnlock(w http.ResponseWriter, r *http.Request, user models.User, id string) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if strings.TrimSpace(id) == "" {
-		http.Error(w, "password id is required", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "password id is required")
 		return
 	}
 	var req desktopUnlockRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		http.Error(w, "invalid json body", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid json body: %v", err))
 		return
 	}
 	if !crypto.VerifyPassword(req.MasterPassword, user.MasterPasswordHash) {
@@ -719,7 +719,7 @@ func (s *Server) handleDesktopPasswordUnlock(w http.ResponseWriter, r *http.Requ
 	}
 	entry, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
 	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeJSONError(w, http.StatusNotFound, "not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -738,7 +738,7 @@ func (s *Server) handleDesktopPasswordUnlock(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handleDesktopNotes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	user, _, ok := s.requireDesktopUser(w, r)
@@ -747,7 +747,7 @@ func (s *Server) handleDesktopNotes(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.store.ListNotes(r.Context(), user.ID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	response := make([]map[string]any, 0, len(items))
@@ -775,7 +775,7 @@ func (s *Server) handleDesktopNoteDetail(w http.ResponseWriter, r *http.Request)
 	path := strings.TrimPrefix(r.URL.Path, "/api/desktop/notes/")
 	path = strings.Trim(path, "/")
 	if path == "" {
-		http.Error(w, "note id is required", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "note id is required")
 		return
 	}
 	if strings.HasSuffix(path, "/unlock") {
@@ -785,12 +785,12 @@ func (s *Server) handleDesktopNoteDetail(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	note, err := s.store.GetNote(r.Context(), s.crypto, path, user.ID)
 	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeJSONError(w, http.StatusNotFound, "not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -806,16 +806,16 @@ func (s *Server) handleDesktopNoteDetail(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleDesktopNoteUnlock(w http.ResponseWriter, r *http.Request, user models.User, id string) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if strings.TrimSpace(id) == "" {
-		http.Error(w, "note id is required", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "note id is required")
 		return
 	}
 	var req desktopUnlockRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		http.Error(w, "invalid json body", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid json body: %v", err))
 		return
 	}
 	if !crypto.VerifyPassword(req.MasterPassword, user.MasterPasswordHash) {
@@ -826,7 +826,7 @@ func (s *Server) handleDesktopNoteUnlock(w http.ResponseWriter, r *http.Request,
 	}
 	note, err := s.store.GetNote(r.Context(), s.crypto, id, user.ID)
 	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeJSONError(w, http.StatusNotFound, "not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -955,6 +955,12 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]any{
+		"error": strings.TrimSpace(message),
+	})
 }
 
 func (s *Server) authorizeRotatingController(w http.ResponseWriter, r *http.Request) (string, string, bool) {
