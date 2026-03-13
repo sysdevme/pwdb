@@ -176,6 +176,15 @@ type controllerSlaveGrantVerifyRequest struct {
 	GrantToken string `json:"grant_token"`
 }
 
+type desktopLoginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type desktopUnlockRequest struct {
+	MasterPassword string `json:"master_password"`
+}
+
 type controllerAuthTokenResponse struct {
 	NextToken string `json:"next_token,omitempty"`
 	Status    string `json:"status"`
@@ -303,6 +312,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/login", s.handleLogin)
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/setup", s.handleSetup)
+	mux.HandleFunc("/api/desktop/login", s.handleDesktopLogin)
+	mux.HandleFunc("/api/desktop/logout", s.handleDesktopLogout)
+	mux.HandleFunc("/api/desktop/passwords", s.handleDesktopPasswords)
+	mux.HandleFunc("/api/desktop/passwords/", s.handleDesktopPasswordDetail)
+	mux.HandleFunc("/api/desktop/notes", s.handleDesktopNotes)
+	mux.HandleFunc("/api/desktop/notes/", s.handleDesktopNoteDetail)
 	mux.HandleFunc("/controller/auth/bootstrap", s.handleControllerAuthBootstrap)
 	mux.HandleFunc("/controller/auth/rotate", s.handleControllerAuthRotate)
 	mux.HandleFunc("/controller/auth/slave-grant", s.handleControllerAuthSlaveGrant)
@@ -491,6 +506,338 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 	})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+func desktopTokenFromRequest(r *http.Request) string {
+	raw := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(raw), "bearer ") {
+		return strings.TrimSpace(raw[7:])
+	}
+	return strings.TrimSpace(r.Header.Get("X-Desktop-Token"))
+}
+
+func (s *Server) loadUserFromDesktopSession(r *http.Request) (models.User, models.Session, bool) {
+	token := desktopTokenFromRequest(r)
+	if token == "" {
+		return models.User{}, models.Session{}, false
+	}
+	sess, err := s.store.GetSession(r.Context(), token)
+	if err != nil {
+		return models.User{}, models.Session{}, false
+	}
+	if time.Now().After(sess.ExpiresAt) {
+		_ = s.store.DeleteSession(r.Context(), sess.ID)
+		return models.User{}, models.Session{}, false
+	}
+	user, err := s.store.GetUserByID(r.Context(), sess.UserID)
+	if err != nil {
+		return models.User{}, models.Session{}, false
+	}
+	return user, sess, true
+}
+
+func (s *Server) requireDesktopUser(w http.ResponseWriter, r *http.Request) (models.User, models.Session, bool) {
+	user, sess, ok := s.loadUserFromDesktopSession(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"error": "invalid or expired desktop session",
+		})
+		return models.User{}, models.Session{}, false
+	}
+	return user, sess, true
+}
+
+func (s *Server) handleDesktopLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req desktopLoginRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	req.Email = strings.TrimSpace(req.Email)
+	if req.Email == "" || req.Password == "" {
+		http.Error(w, "email and password are required", http.StatusBadRequest)
+		return
+	}
+	clientIP := clientIPFromRequest(r)
+	if blockedFor := s.loginBlockedFor(clientIP); blockedFor > 0 {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"error": "too many login attempts",
+		})
+		return
+	}
+	user, err := s.store.GetUserByEmail(r.Context(), req.Email)
+	if err != nil || !crypto.VerifyPassword(req.Password, user.PasswordHash) {
+		s.recordLoginFailure(clientIP)
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"error": "invalid credentials",
+		})
+		return
+	}
+	s.clearLoginFailures(clientIP)
+	if user.Status != "active" {
+		if err := s.store.SetUserStatus(r.Context(), user.ID, "active"); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		user.Status = "active"
+	}
+	sessionID := uuid.New().String()
+	expiresAt := time.Now().Add(7 * 24 * time.Hour)
+	if err := s.store.CreateSession(r.Context(), models.Session{
+		ID:        sessionID,
+		UserID:    user.ID,
+		ExpiresAt: expiresAt,
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	profile, _ := s.store.GetServerProfile(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token":      sessionID,
+		"expires_at": expiresAt.UTC().Format(time.RFC3339),
+		"user": map[string]any{
+			"id":       user.ID,
+			"email":    user.Email,
+			"is_admin": user.IsAdmin,
+			"status":   user.Status,
+		},
+		"server": map[string]any{
+			"mode":        profile.ServerMode,
+			"sync_status": profile.SyncStatus,
+		},
+	})
+}
+
+func (s *Server) handleDesktopLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	_, sess, ok := s.requireDesktopUser(w, r)
+	if !ok {
+		return
+	}
+	_ = s.store.DeleteSession(r.Context(), sess.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+func (s *Server) handleDesktopPasswords(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, _, ok := s.requireDesktopUser(w, r)
+	if !ok {
+		return
+	}
+	items, err := s.store.ListPasswords(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	response := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		response = append(response, map[string]any{
+			"id":               item.ID,
+			"title":            item.Title,
+			"username":         item.Username,
+			"url":              item.URL,
+			"tags":             item.Tags,
+			"groups":           item.Groups,
+			"owner_email":      item.OwnerEmail,
+			"is_owner":         item.UserID == user.ID,
+			"shared_at":        item.SharedAt,
+			"requires_unlock":  true,
+			"supports_desktop": true,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": response})
+}
+
+func (s *Server) handleDesktopPasswordDetail(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := s.requireDesktopUser(w, r)
+	if !ok {
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/desktop/passwords/")
+	path = strings.Trim(path, "/")
+	if path == "" {
+		http.Error(w, "password id is required", http.StatusBadRequest)
+		return
+	}
+	if strings.HasSuffix(path, "/unlock") {
+		id := strings.TrimSuffix(path, "/unlock")
+		id = strings.TrimSuffix(id, "/")
+		s.handleDesktopPasswordUnlock(w, r, user, id)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	entry, err := s.store.GetPassword(r.Context(), s.crypto, path, user.ID)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":              entry.ID,
+		"title":           entry.Title,
+		"username":        entry.Username,
+		"url":             entry.URL,
+		"tags":            entry.Tags,
+		"groups":          entry.Groups,
+		"owner_email":     entry.OwnerEmail,
+		"is_owner":        entry.UserID == user.ID,
+		"requires_unlock": true,
+	})
+}
+
+func (s *Server) handleDesktopPasswordUnlock(w http.ResponseWriter, r *http.Request, user models.User, id string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if strings.TrimSpace(id) == "" {
+		http.Error(w, "password id is required", http.StatusBadRequest)
+		return
+	}
+	var req desktopUnlockRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	if !crypto.VerifyPassword(req.MasterPassword, user.MasterPasswordHash) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"error": "master password is invalid",
+		})
+		return
+	}
+	entry, err := s.store.GetPassword(r.Context(), s.crypto, id, user.ID)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":          entry.ID,
+		"title":       entry.Title,
+		"username":    entry.Username,
+		"password":    entry.Password,
+		"url":         entry.URL,
+		"notes":       entry.Notes,
+		"tags":        entry.Tags,
+		"groups":      entry.Groups,
+		"owner_email": entry.OwnerEmail,
+		"is_owner":    entry.UserID == user.ID,
+	})
+}
+
+func (s *Server) handleDesktopNotes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, _, ok := s.requireDesktopUser(w, r)
+	if !ok {
+		return
+	}
+	items, err := s.store.ListNotes(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	response := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		response = append(response, map[string]any{
+			"id":               item.ID,
+			"title":            item.Title,
+			"tags":             item.Tags,
+			"groups":           item.Groups,
+			"owner_email":      item.OwnerEmail,
+			"is_owner":         item.UserID == user.ID,
+			"updated_at":       item.UpdatedAt,
+			"requires_unlock":  true,
+			"supports_desktop": true,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": response})
+}
+
+func (s *Server) handleDesktopNoteDetail(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := s.requireDesktopUser(w, r)
+	if !ok {
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/desktop/notes/")
+	path = strings.Trim(path, "/")
+	if path == "" {
+		http.Error(w, "note id is required", http.StatusBadRequest)
+		return
+	}
+	if strings.HasSuffix(path, "/unlock") {
+		id := strings.TrimSuffix(path, "/unlock")
+		id = strings.TrimSuffix(id, "/")
+		s.handleDesktopNoteUnlock(w, r, user, id)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	note, err := s.store.GetNote(r.Context(), s.crypto, path, user.ID)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":              note.ID,
+		"title":           note.Title,
+		"tags":            note.Tags,
+		"groups":          note.Groups,
+		"owner_email":     note.OwnerEmail,
+		"is_owner":        note.UserID == user.ID,
+		"requires_unlock": true,
+	})
+}
+
+func (s *Server) handleDesktopNoteUnlock(w http.ResponseWriter, r *http.Request, user models.User, id string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if strings.TrimSpace(id) == "" {
+		http.Error(w, "note id is required", http.StatusBadRequest)
+		return
+	}
+	var req desktopUnlockRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	if !crypto.VerifyPassword(req.MasterPassword, user.MasterPasswordHash) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"error": "master password is invalid",
+		})
+		return
+	}
+	note, err := s.store.GetNote(r.Context(), s.crypto, id, user.ID)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":          note.ID,
+		"title":       note.Title,
+		"body":        note.Body,
+		"tags":        note.Tags,
+		"groups":      note.Groups,
+		"owner_email": note.OwnerEmail,
+		"is_owner":    note.UserID == user.ID,
+	})
 }
 
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
@@ -5389,7 +5736,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				}
 			}
 		}
-		if strings.HasPrefix(path, "/static/") || strings.HasPrefix(path, "/controller/") || path == "/login" || path == "/setup" || path == "/auth/biometric-token" || path == "/share/password" {
+		if strings.HasPrefix(path, "/static/") || strings.HasPrefix(path, "/controller/") || strings.HasPrefix(path, "/api/desktop/") || path == "/login" || path == "/setup" || path == "/auth/biometric-token" || path == "/share/password" {
 			next.ServeHTTP(w, r)
 			return
 		}
