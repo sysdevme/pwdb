@@ -1,7 +1,7 @@
 # Password Manager (Go) - Unified README
 
 Default development branch: `v4`.
-Current release tag: `4.0.9`.
+Current release tag: `4.1.0`.
 
 This repository now combines:
 
@@ -28,11 +28,25 @@ It is not production-ready and should not be exposed directly to the public inte
 
 ## Controller auth flow
 
-As of `4.0.9`, controller auth is split into three paths:
+As of `4.1.0`, controller auth is split into three paths:
 
 - Controller -> master operational calls use a rotating per-controller bearer token after bootstrap approval.
 - Controller -> slave apply calls use a one-time short-lived slave grant issued by master.
+- Controller local `/v1/...` management calls require `CONTROLLER_SHARED_TOKEN`.
 - Health/status endpoints are read-only and no longer carry controller secrets.
+
+## Security fixes in 4.1.0
+
+This release closes the main review findings from the current hardening pass:
+
+- Non-admin users can no longer change global node mode in `Settings`.
+- Controller-local `/v1/...` management endpoints now require the configured shared token.
+- Controller startup now fails fast when `CONTROLLER_SHARED_TOKEN` is missing or left as a placeholder.
+- Controller pairing and slave-grant flows now validate and normalize `slave_endpoint` values and reject dangerous targets such as localhost, loopback, link-local, multicast, paths, queries, fragments, and unsupported schemes.
+- Slave apply endpoints now verify that a one-time controller grant matches the actual receiving slave endpoint.
+- Password and secure note update paths now fail closed on owner mismatch before any foreign tag/group metadata can be changed.
+- Initial `/setup` now runs atomically in one DB transaction.
+- Admin backup restore now runs atomically in one DB transaction.
 
 ## Quick start
 
@@ -250,6 +264,7 @@ Windows (PowerShell):
 
 ```powershell
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:9091/v1/master/bootstrap" `
+  -Headers @{ Authorization = "Bearer <CONTROLLER_SHARED_TOKEN>" } `
   -ContentType "application/json" `
   -Body (@{ master_key = "<CONTROLLER_MASTER_KEY>" } | ConvertTo-Json -Compress)
 ```
@@ -258,6 +273,7 @@ Linux/macOS (bash):
 
 ```bash
 curl -sS -X POST "http://127.0.0.1:9091/v1/master/bootstrap" \
+  -H "Authorization: Bearer <CONTROLLER_SHARED_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"master_key":"<CONTROLLER_MASTER_KEY>"}'
 ```
@@ -267,13 +283,15 @@ Then list visible controllers (token rotates each call):
 Windows (PowerShell):
 
 ```powershell
-curl.exe -sS http://127.0.0.1:9091/v1/master/controllers
+curl.exe -sS http://127.0.0.1:9091/v1/master/controllers `
+  -H "Authorization: Bearer <CONTROLLER_SHARED_TOKEN>"
 ```
 
 Linux/macOS (bash):
 
 ```bash
-curl -sS http://127.0.0.1:9091/v1/master/controllers
+curl -sS http://127.0.0.1:9091/v1/master/controllers \
+  -H "Authorization: Bearer <CONTROLLER_SHARED_TOKEN>"
 ```
 
 ## Environment
@@ -359,7 +377,7 @@ Keep/customize them per environment.
 
 - No default TLS/HTTPS termination inside app container
 - No mTLS for controller endpoints yet
-- Shared-token based controller auth model still in transition
+- Controller-local `/v1/...` endpoints still rely on a shared token and should stay on trusted management networks only
 - No built-in rate limiting/brute-force controls for controller APIs
 
 If deploying beyond local lab use, place behind a hardened reverse proxy with HTTPS and apply additional auth/rate-limit controls.

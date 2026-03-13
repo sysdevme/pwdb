@@ -102,32 +102,8 @@ func (s *Store) UpsertPassword(ctx context.Context, cryptoSvc *crypto.Service, e
 	}
 	defer tx.Rollback(ctx)
 
-	createdAt := nullTime(entry.CreatedAt)
-	updatedAt := nullTime(entry.UpdatedAt)
-	importSource := nullIfEmpty(entry.ImportSource)
-	importRaw := nullIfEmpty(entry.ImportRaw)
-	_, err = tx.Exec(ctx, sqlUpsertPassword, id, userID, entry.Title, entry.Username, passEnc, entry.URL, notesEnc, importSource, importRaw, createdAt, updatedAt)
-	if err != nil {
+	if err := upsertPasswordTx(ctx, tx, userID, id, entry, passEnc, notesEnc); err != nil {
 		return err
-	}
-
-	for _, tagName := range normalizeTags(entry.Tags) {
-		tagID, err := ensureTag(ctx, tx, userID, tagName)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, sqlInsertEntryTag, id, tagID); err != nil {
-			return err
-		}
-	}
-	for _, groupName := range normalizeTags(entry.Groups) {
-		groupID, err := ensureGroup(ctx, tx, userID, groupName)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, sqlInsertGroupEntry, groupID, id); err != nil {
-			return err
-		}
 	}
 
 	return tx.Commit(ctx)
@@ -269,9 +245,12 @@ func (s *Store) UpdatePassword(ctx context.Context, cryptoSvc *crypto.Service, e
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx, sqlUpdatePassword, uid, entry.Title, entry.Username, passEnc, entry.URL, notesEnc, userID)
+	tag, err := tx.Exec(ctx, sqlUpdatePassword, uid, entry.Title, entry.Username, passEnc, entry.URL, notesEnc, userID)
 	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("password not found")
 	}
 	if _, err := tx.Exec(ctx, sqlDeleteEntryTagsByEntryID, uid); err != nil {
 		return err
@@ -407,31 +386,8 @@ func (s *Store) InsertSecureNote(ctx context.Context, cryptoSvc *crypto.Service,
 	}
 	defer tx.Rollback(ctx)
 
-	createdAt := nullTime(note.CreatedAt)
-	updatedAt := nullTime(note.UpdatedAt)
-	importSource := nullIfEmpty(note.ImportSource)
-	importRaw := nullIfEmpty(note.ImportRaw)
-	_, err = tx.Exec(ctx, sqlUpsertSecureNote, id, userID, note.Title, bodyEnc, importSource, importRaw, createdAt, updatedAt)
-	if err != nil {
+	if err := upsertNoteTx(ctx, tx, userID, id, note, bodyEnc); err != nil {
 		return err
-	}
-	for _, tagName := range normalizeTags(note.Tags) {
-		tagID, err := ensureTag(ctx, tx, userID, tagName)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, sqlInsertNoteTag, id, tagID); err != nil {
-			return err
-		}
-	}
-	for _, groupName := range normalizeTags(note.Groups) {
-		groupID, err := ensureGroup(ctx, tx, userID, groupName)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, sqlInsertNoteGroupEntry, groupID, id); err != nil {
-			return err
-		}
 	}
 	return tx.Commit(ctx)
 }
@@ -681,7 +637,7 @@ func (s *Store) SetServerProfile(ctx context.Context, profile models.ServerProfi
 		appVersion = strings.TrimSpace(os.Getenv("APP_VERSION"))
 	}
 	if appVersion == "" {
-		appVersion = "4.0.6"
+		appVersion = "4.1.0"
 	}
 	_, err = s.pool.Exec(
 		ctx,
@@ -693,6 +649,83 @@ func (s *Store) SetServerProfile(ctx context.Context, profile models.ServerProfi
 		appVersion,
 	)
 	return err
+}
+
+func (s *Store) InitializeSetup(ctx context.Context, profile models.ServerProfile, user models.User, serverWrappedKey []byte, masterWrappedKey []byte, fingerprint string) error {
+	mode, err := normalizeServerMode(profile.ServerMode)
+	if err != nil {
+		return err
+	}
+	status, err := normalizeSyncStatus(profile.SyncStatus)
+	if err != nil {
+		return err
+	}
+	appVersion := strings.TrimSpace(profile.AppVersion)
+	if appVersion == "" {
+		appVersion = strings.TrimSpace(os.Getenv("APP_VERSION"))
+	}
+	if appVersion == "" {
+		appVersion = "4.1.0"
+	}
+	id, err := parseOrNewUUID(user.ID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(user.Email) == "" || strings.TrimSpace(user.PasswordHash) == "" || strings.TrimSpace(user.MasterPasswordHash) == "" {
+		return errors.New("user email and password hashes are required")
+	}
+	if len(serverWrappedKey) == 0 || len(masterWrappedKey) == 0 || strings.TrimSpace(fingerprint) == "" {
+		return errors.New("wrapped keys and fingerprint are required")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var count int
+	if err := tx.QueryRow(ctx, sqlCountUsers).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return errors.New("setup is already complete")
+	}
+
+	statusValue := strings.TrimSpace(user.Status)
+	if statusValue == "" {
+		statusValue = "pending"
+	}
+	if _, err := tx.Exec(
+		ctx,
+		sqlUpsertServerProfile,
+		mode,
+		status,
+		nullIfEmpty(profile.LinkedMasterID),
+		nullIfEmpty(profile.LinkedMasterURL),
+		appVersion,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, sqlCreateUser, id, strings.TrimSpace(user.Email), user.PasswordHash, user.MasterPasswordHash, user.IsAdmin, statusValue); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, sqlUpsertUserSyncKey, id, serverWrappedKey, masterWrappedKey, strings.TrimSpace(fingerprint)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, sqlAssignPasswordsToUser, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, sqlAssignNotesToUser, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, sqlAssignTagsToUser, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, sqlAssignGroupsToUser, id); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (s *Store) GetServerProfile(ctx context.Context) (models.ServerProfile, error) {
@@ -1248,9 +1281,12 @@ func (s *Store) UpdateNote(ctx context.Context, cryptoSvc *crypto.Service, note 
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx, sqlUpdateNote, uid, note.Title, bodyEnc, userID)
+	tag, err := tx.Exec(ctx, sqlUpdateNote, uid, note.Title, bodyEnc, userID)
 	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("note not found")
 	}
 	if _, err := tx.Exec(ctx, sqlDeleteNoteTagsByNoteID, uid); err != nil {
 		return err
@@ -1717,6 +1753,63 @@ func (s *Store) InsertPendingSyncBundle(ctx context.Context, bundle models.Pendi
 	return tag.RowsAffected() > 0, nil
 }
 
+func (s *Store) RestoreBackup(ctx context.Context, cryptoSvc *crypto.Service, userID string, passwords []models.PasswordEntry, notes []models.SecureNote) error {
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	for _, entry := range passwords {
+		if entry.Title == "" || entry.Password == "" {
+			return errors.New("backup contains password entry with missing title or password")
+		}
+		entryID, err := parseOrNewUUID(entry.ID)
+		if err != nil {
+			return err
+		}
+		passEnc, err := cryptoSvc.Encrypt(entry.Password)
+		if err != nil {
+			return err
+		}
+		var notesEnc []byte
+		if entry.Notes != "" {
+			notesEnc, err = cryptoSvc.Encrypt(entry.Notes)
+			if err != nil {
+				return err
+			}
+		}
+		entry.UserID = userID
+		if err := upsertPasswordTx(ctx, tx, userUUID, entryID, entry, passEnc, notesEnc); err != nil {
+			return err
+		}
+	}
+
+	for _, note := range notes {
+		if note.Title == "" || note.Body == "" {
+			return errors.New("backup contains secure note with missing title or body")
+		}
+		noteID, err := parseOrNewUUID(note.ID)
+		if err != nil {
+			return err
+		}
+		bodyEnc, err := cryptoSvc.Encrypt(note.Body)
+		if err != nil {
+			return err
+		}
+		note.UserID = userID
+		if err := upsertNoteTx(ctx, tx, userUUID, noteID, note, bodyEnc); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit(ctx)
+}
+
 func (s *Store) ListPendingSyncBundles(ctx context.Context, userID string) ([]models.PendingSyncBundle, error) {
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
@@ -2002,6 +2095,76 @@ func parseOrNewUUID(value string) (uuid.UUID, error) {
 		return uuid.NewSHA1(uuid.NameSpaceOID, []byte(value)), nil
 	}
 	return parsed, nil
+}
+
+func upsertPasswordTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, id uuid.UUID, entry models.PasswordEntry, passEnc []byte, notesEnc []byte) error {
+	createdAt := nullTime(entry.CreatedAt)
+	updatedAt := nullTime(entry.UpdatedAt)
+	importSource := nullIfEmpty(entry.ImportSource)
+	importRaw := nullIfEmpty(entry.ImportRaw)
+	if _, err := tx.Exec(ctx, sqlUpsertPassword, id, userID, entry.Title, entry.Username, passEnc, entry.URL, notesEnc, importSource, importRaw, createdAt, updatedAt); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, sqlDeleteEntryTagsByEntryID, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, sqlDeleteGroupEntriesByEntryID, id); err != nil {
+		return err
+	}
+	for _, tagName := range normalizeTags(entry.Tags) {
+		tagID, err := ensureTag(ctx, tx, userID, tagName)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, sqlInsertEntryTag, id, tagID); err != nil {
+			return err
+		}
+	}
+	for _, groupName := range normalizeTags(entry.Groups) {
+		groupID, err := ensureGroup(ctx, tx, userID, groupName)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, sqlInsertGroupEntry, groupID, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func upsertNoteTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, id uuid.UUID, note models.SecureNote, bodyEnc []byte) error {
+	createdAt := nullTime(note.CreatedAt)
+	updatedAt := nullTime(note.UpdatedAt)
+	importSource := nullIfEmpty(note.ImportSource)
+	importRaw := nullIfEmpty(note.ImportRaw)
+	if _, err := tx.Exec(ctx, sqlUpsertSecureNote, id, userID, note.Title, bodyEnc, importSource, importRaw, createdAt, updatedAt); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, sqlDeleteNoteTagsByNoteID, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, sqlDeleteNoteGroupEntriesByNoteID, id); err != nil {
+		return err
+	}
+	for _, tagName := range normalizeTags(note.Tags) {
+		tagID, err := ensureTag(ctx, tx, userID, tagName)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, sqlInsertNoteTag, id, tagID); err != nil {
+			return err
+		}
+	}
+	for _, groupName := range normalizeTags(note.Groups) {
+		groupID, err := ensureGroup(ctx, tx, userID, groupName)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, sqlInsertNoteGroupEntry, groupID, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) ResolveExternalID(value string) (uuid.UUID, error) {

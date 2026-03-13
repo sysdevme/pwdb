@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -54,6 +55,8 @@ func main() {
 }
 
 func validateSecrets(cfg config.Config) error {
-	_ = cfg
+	if config.SecretLooksUnset(cfg.Master.SharedToken) {
+		return fmt.Errorf("controller shared token is required")
+	}
 	return nil
 }

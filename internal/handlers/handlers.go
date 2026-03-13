@@ -40,7 +40,7 @@ const userCtxKey ctxKey = 1
 const (
 	defaultPageSize               = 10
 	defaultUnlockMinutes          = 5
-	defaultAppVersion             = "4.0.9"
+	defaultAppVersion             = "4.1.0"
 	defaultBuildAuthor            = "unknown"
 	defaultBuildLastUpdate        = "unknown"
 	controllerHealthcheckInterval = 30 * time.Second
@@ -559,32 +559,39 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		if serverMode == "AS-S" {
 			syncStatus = "await_updates"
 		}
-		if err := s.store.SetServerProfile(r.Context(), models.ServerProfile{
+		adminID := uuid.New().String()
+		key, err := crypto.GenerateRandomKey(32)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		keyEncoded := base64.RawStdEncoding.EncodeToString(key)
+		serverWrapped, err := s.crypto.Encrypt(keyEncoded)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		masterWrapped, err := crypto.WrapKeyWithPassword(masterPassword, key)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := s.store.InitializeSetup(r.Context(), models.ServerProfile{
 			ServerMode:      serverMode,
 			SyncStatus:      syncStatus,
 			LinkedMasterID:  linkedMasterID,
 			LinkedMasterURL: linkedMasterURL,
-		}); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		adminID := uuid.New().String()
-		if err := s.store.CreateUser(r.Context(), models.User{
+		}, models.User{
 			ID:                 adminID,
 			Email:              email,
 			Status:             "active",
 			PasswordHash:       loginHash,
 			MasterPasswordHash: masterHash,
 			IsAdmin:            true,
-		}); err != nil {
+		}, serverWrapped, masterWrapped, crypto.KeyFingerprint(key)); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if err := s.ensureUserSyncKey(r.Context(), adminID, masterPassword); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		_ = s.store.AssignUnownedToUser(r.Context(), adminID)
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -650,7 +657,8 @@ func (s *Server) verifyControllerSlaveGrant(ctx context.Context, masterBaseURL s
 		return "", fmt.Errorf("controller grant verification failed: %s", strings.TrimSpace(string(msg)))
 	}
 	var payload struct {
-		ControllerID string `json:"controller_id"`
+		ControllerID  string `json:"controller_id"`
+		SlaveEndpoint string `json:"slave_endpoint"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return "", err
@@ -658,7 +666,71 @@ func (s *Server) verifyControllerSlaveGrant(ctx context.Context, masterBaseURL s
 	if strings.TrimSpace(payload.ControllerID) == "" {
 		return "", errors.New("controller grant verification returned empty controller_id")
 	}
-	return strings.TrimSpace(payload.ControllerID), nil
+	return strings.TrimSpace(payload.SlaveEndpoint), nil
+}
+
+func normalizeControllerSlaveEndpoint(raw string) (string, error) {
+	val := strings.TrimSpace(raw)
+	if val == "" {
+		return "", errors.New("slave_endpoint is required")
+	}
+	u, err := url.Parse(val)
+	if err != nil {
+		return "", fmt.Errorf("invalid slave_endpoint: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", errors.New("slave_endpoint must use http or https")
+	}
+	if u.User != nil {
+		return "", errors.New("slave_endpoint must not include user info")
+	}
+	if strings.TrimSpace(u.Hostname()) == "" {
+		return "", errors.New("slave_endpoint host is required")
+	}
+	if path := strings.TrimSpace(u.EscapedPath()); path != "" && path != "/" {
+		return "", errors.New("slave_endpoint must not include a path")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("slave_endpoint must not include query or fragment")
+	}
+	host := strings.TrimSpace(strings.ToLower(u.Hostname()))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return "", errors.New("slave_endpoint must not target localhost")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() {
+			return "", errors.New("slave_endpoint targets a disallowed IP range")
+		}
+	}
+	u.Path = ""
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.Fragment = ""
+	return strings.TrimRight(u.String(), "/"), nil
+}
+
+func normalizeCurrentRequestEndpoint(r *http.Request) (string, error) {
+	host := strings.TrimSpace(r.Host)
+	if host == "" {
+		return "", errors.New("request host is empty")
+	}
+	scheme := "http"
+	if isSecureRequest(r) {
+		scheme = "https"
+	}
+	return normalizeControllerSlaveEndpoint(scheme + "://" + host)
+}
+
+func controllerGrantMatchesRequest(r *http.Request, grantedEndpoint string) bool {
+	requestEndpoint, err := normalizeCurrentRequestEndpoint(r)
+	if err != nil {
+		return false
+	}
+	granted, err := normalizeControllerSlaveEndpoint(grantedEndpoint)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(requestEndpoint, granted)
 }
 
 func hashControllerToken(token string) string {
@@ -821,10 +893,12 @@ func (s *Server) handleControllerAuthSlaveGrant(w http.ResponseWriter, r *http.R
 		return
 	}
 	req.SlaveEndpoint = strings.TrimSpace(req.SlaveEndpoint)
-	if req.SlaveEndpoint == "" {
-		http.Error(w, "slave_endpoint is required", http.StatusBadRequest)
+	normalizedEndpoint, err := normalizeControllerSlaveEndpoint(req.SlaveEndpoint)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	req.SlaveEndpoint = normalizedEndpoint
 	grantToken, err := randomToken()
 	if err != nil {
 		http.Error(w, "failed to issue slave grant", http.StatusInternalServerError)
@@ -918,6 +992,17 @@ func (s *Server) handleControllerPair(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json body", http.StatusBadRequest)
 		return
 	}
+	req.SlaveEndpoint = strings.TrimSpace(req.SlaveEndpoint)
+	if req.SlaveServerID = strings.TrimSpace(req.SlaveServerID); req.SlaveServerID == "" {
+		http.Error(w, "slave_server_id is required", http.StatusBadRequest)
+		return
+	}
+	normalizedEndpoint, err := normalizeControllerSlaveEndpoint(req.SlaveEndpoint)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	req.SlaveEndpoint = normalizedEndpoint
 	if err := s.store.UpsertControllerLink(r.Context(), req.SlaveServerID, req.SlaveEndpoint); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -1556,8 +1641,13 @@ func (s *Server) handleControllerSnapshotApply(w http.ResponseWriter, r *http.Re
 	if masterBaseURL == "" {
 		masterBaseURL = strings.TrimSpace(req.MasterURL)
 	}
-	if _, err := s.verifyControllerSlaveGrant(r.Context(), masterBaseURL, r.Header.Get("X-Controller-Grant")); err != nil {
+	grantedEndpoint, err := s.verifyControllerSlaveGrant(r.Context(), masterBaseURL, r.Header.Get("X-Controller-Grant"))
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	if !controllerGrantMatchesRequest(r, grantedEndpoint) {
+		http.Error(w, "controller grant is not valid for this slave endpoint", http.StatusUnauthorized)
 		return
 	}
 	if req.SnapshotVersion <= 0 || strings.TrimSpace(req.MasterURL) == "" {
@@ -1689,8 +1779,13 @@ func (s *Server) handleControllerSyncBundlesApply(w http.ResponseWriter, r *http
 	if masterBaseURL == "" {
 		masterBaseURL = strings.TrimSpace(req.MasterURL)
 	}
-	if _, err := s.verifyControllerSlaveGrant(r.Context(), masterBaseURL, r.Header.Get("X-Controller-Grant")); err != nil {
+	grantedEndpoint, err := s.verifyControllerSlaveGrant(r.Context(), masterBaseURL, r.Header.Get("X-Controller-Grant"))
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	if !controllerGrantMatchesRequest(r, grantedEndpoint) {
+		http.Error(w, "controller grant is not valid for this slave endpoint", http.StatusUnauthorized)
 		return
 	}
 	inserted := 0
@@ -1768,8 +1863,13 @@ func (s *Server) handleControllerUpdateApply(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "invalid json body", http.StatusBadRequest)
 		return
 	}
-	if _, err := s.verifyControllerSlaveGrant(r.Context(), profile.LinkedMasterURL, r.Header.Get("X-Controller-Grant")); err != nil {
+	grantedEndpoint, err := s.verifyControllerSlaveGrant(r.Context(), profile.LinkedMasterURL, r.Header.Get("X-Controller-Grant"))
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	if !controllerGrantMatchesRequest(r, grantedEndpoint) {
+		http.Error(w, "controller grant is not valid for this slave endpoint", http.StatusUnauthorized)
 		return
 	}
 	inserted, err := s.store.InsertControllerUpdateEvent(
@@ -3204,6 +3304,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		action := strings.TrimSpace(r.FormValue("action"))
 		if action == "server_mode" {
+			if !user.IsAdmin {
+				renderSettings(loadServerProfile(), "", "Only admins can change node mode.", true)
+				return
+			}
 			currentProfile := loadServerProfile()
 			currentMode := strings.TrimSpace(strings.ToUpper(currentProfile.ServerMode))
 			targetMode := strings.TrimSpace(strings.ToUpper(r.FormValue("server_mode")))
@@ -4689,20 +4793,9 @@ func (s *Server) handleAdminRestore(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid backup file", http.StatusBadRequest)
 		return
 	}
-	ctx := r.Context()
-	for _, entry := range backup.Passwords {
-		entry.UserID = user.ID
-		if err := s.store.UpsertPassword(ctx, s.crypto, entry); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-	for _, note := range backup.Notes {
-		note.UserID = user.ID
-		if err := s.store.InsertSecureNote(ctx, s.crypto, note); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	if err := s.store.RestoreBackup(r.Context(), s.crypto, user.ID, backup.Passwords, backup.Notes); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	s.renderAdminPage(w, r, fmt.Sprintf("Restored %d passwords and %d notes.", len(backup.Passwords), len(backup.Notes)))
 }

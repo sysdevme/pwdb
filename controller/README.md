@@ -37,7 +37,7 @@ Important fields:
 - `master.snapshot_export_path`: endpoint used to export snapshot data from master
 - `master.snapshot_apply_path`: path used when sending snapshot data to each slave
 - `master.update_ack_path`: endpoint on master for update ACK
-- `master.shared_token`: legacy field kept for compatibility; current controller startup no longer requires it
+- `master.shared_token`: shared token required to call the controller's local `/v1/...` management API
 
 ## Run
 
@@ -46,7 +46,7 @@ Windows (PowerShell):
 ```powershell
 cd E:\pwdb-main\controller
 $env:CONTROLLER_MASTER_KEY = "<CONTROLLER_MASTER_KEY>"
-$env:CONTROLLER_SHARED_TOKEN = "<CONTROLLER_SHARED_TOKEN>" # optional legacy compatibility
+$env:CONTROLLER_SHARED_TOKEN = "<CONTROLLER_SHARED_TOKEN>"
 go run ./cmd/controller -config configs/controller.dev.json
 ```
 
@@ -55,13 +55,14 @@ Linux/macOS (bash):
 ```bash
 cd /opt/pwdb-main/controller
 CONTROLLER_MASTER_KEY="<CONTROLLER_MASTER_KEY>" \
+CONTROLLER_SHARED_TOKEN="<CONTROLLER_SHARED_TOKEN>" \
 go run ./cmd/controller -config configs/controller.dev.json
 ```
 
 Environment overrides:
 
 - `CONTROLLER_MASTER_KEY` overrides `master.master_key`
-- `CONTROLLER_SHARED_TOKEN` is optional and only for legacy compatibility paths
+- `CONTROLLER_SHARED_TOKEN` overrides `master.shared_token` and is required for local controller management calls
 
 ## API (controller local)
 
@@ -73,6 +74,12 @@ Environment overrides:
 
 `POST /v1/master/bootstrap`
 
+Required header:
+
+```text
+Authorization: Bearer <CONTROLLER_SHARED_TOKEN>
+```
+
 Body:
 
 ```json
@@ -83,9 +90,21 @@ Body:
 
 `GET /v1/master/controllers`
 
+Required header:
+
+```text
+Authorization: Bearer <CONTROLLER_SHARED_TOKEN>
+```
+
 ### Register slave by selected controller ID
 
 `POST /v1/slaves/register`
+
+Required header:
+
+```text
+Authorization: Bearer <CONTROLLER_SHARED_TOKEN>
+```
 
 Body:
 
@@ -105,9 +124,21 @@ If `controller_id` is omitted, controller auto-selects the highest-weight active
 
 `GET /v1/slaves`
 
+Required header:
+
+```text
+Authorization: Bearer <CONTROLLER_SHARED_TOKEN>
+```
+
 ### Unregister local slave
 
 `POST /v1/slaves/unregister`
+
+Required header:
+
+```text
+Authorization: Bearer <CONTROLLER_SHARED_TOKEN>
+```
 
 Body:
 
@@ -120,6 +151,12 @@ Body:
 ### Trigger immediate sync
 
 `POST /v1/slaves/sync`
+
+Required header:
+
+```text
+Authorization: Bearer <CONTROLLER_SHARED_TOKEN>
+```
 
 Returns sync counters including `updates_sent`.
 
@@ -140,6 +177,7 @@ Linux/macOS:
 ```bash
 cd /opt/pwdb-main/controller
 CONTROLLER_MASTER_KEY="<CONTROLLER_MASTER_KEY>" \
+CONTROLLER_SHARED_TOKEN="<CONTROLLER_SHARED_TOKEN>" \
 go run ./cmd/controller -config configs/controller.dev.json
 ```
 
@@ -148,7 +186,7 @@ Windows (PowerShell):
 ```powershell
 cd E:\pwdb-main\controller
 $env:CONTROLLER_MASTER_KEY = "<CONTROLLER_MASTER_KEY>"
-$env:CONTROLLER_SHARED_TOKEN = "<CONTROLLER_SHARED_TOKEN>" # optional legacy compatibility
+$env:CONTROLLER_SHARED_TOKEN = "<CONTROLLER_SHARED_TOKEN>"
 go run ./cmd/controller -config configs/controller.dev.json
 ```
 

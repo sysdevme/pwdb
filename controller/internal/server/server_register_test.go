@@ -70,6 +70,7 @@ func TestHandleRegisterSlaveAppliesDefaultPort(t *testing.T) {
 	}
 	srv := New(config.Config{
 		ControllerID: "controller-01",
+		Master:       config.MasterConfig{SharedToken: "shared-token"},
 		Slave:        config.SlaveConfig{DefaultPort: 18080},
 	}, stub, store)
 
@@ -78,9 +79,10 @@ func TestHandleRegisterSlaveAppliesDefaultPort(t *testing.T) {
 		"slave_url": "http://10.0.0.25",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/slaves/register", bytes.NewReader(reqBody))
+	req.Header.Set("Authorization", "Bearer shared-token")
 	w := httptest.NewRecorder()
 
-	srv.handleRegisterSlave(w, req)
+	srv.Routes().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -97,5 +99,63 @@ func TestHandleRegisterSlaveAppliesDefaultPort(t *testing.T) {
 	}
 	if st.Slaves[0].SlaveURL != "http://10.0.0.25:18080" {
 		t.Fatalf("expected stored slave URL with default port, got %q", st.Slaves[0].SlaveURL)
+	}
+}
+
+func TestHandleRegisterSlaveRequiresSharedToken(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewStateStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatalf("NewStateStore error: %v", err)
+	}
+	if err := store.SetToken("token-1"); err != nil {
+		t.Fatalf("SetToken error: %v", err)
+	}
+
+	stub := &registerMasterStub{
+		controllers: []master.ControllerInfo{{ID: "controller-01", Status: "active", Weight: 1}},
+		nextToken:   "token-2",
+	}
+	srv := New(config.Config{
+		ControllerID: "controller-01",
+		Master:       config.MasterConfig{SharedToken: "shared-token"},
+		Slave:        config.SlaveConfig{DefaultPort: 18080},
+	}, stub, store)
+
+	reqBody, _ := json.Marshal(map[string]string{
+		"slave_id":  "slave-1",
+		"slave_url": "http://10.0.0.25",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/slaves/register", bytes.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	srv.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%s", w.Code, w.Body.String())
+	}
+	if stub.pairSlaveID != "" {
+		t.Fatalf("expected no pair call when auth fails, got %q", stub.pairSlaveID)
+	}
+}
+
+func TestHandleListSlavesRequiresSharedToken(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewStateStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatalf("NewStateStore error: %v", err)
+	}
+	srv := New(config.Config{
+		ControllerID: "controller-01",
+		Master:       config.MasterConfig{SharedToken: "shared-token"},
+	}, &registerMasterStub{}, store)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/slaves", nil)
+	w := httptest.NewRecorder()
+
+	srv.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%s", w.Code, w.Body.String())
 	}
 }

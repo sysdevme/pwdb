@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -65,13 +66,37 @@ func New(cfg config.Config, m masterAPI, state *StateStore) *Server {
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/v1/master/bootstrap", s.handleBootstrap)
-	mux.HandleFunc("/v1/master/controllers", s.handleListControllers)
-	mux.HandleFunc("/v1/slaves/register", s.handleRegisterSlave)
-	mux.HandleFunc("/v1/slaves/unregister", s.handleUnregisterSlave)
-	mux.HandleFunc("/v1/slaves/sync", s.handleSyncSlaves)
-	mux.HandleFunc("/v1/slaves", s.handleListSlaves)
+	mux.HandleFunc("/v1/master/bootstrap", s.withSharedTokenAuth(s.handleBootstrap))
+	mux.HandleFunc("/v1/master/controllers", s.withSharedTokenAuth(s.handleListControllers))
+	mux.HandleFunc("/v1/slaves/register", s.withSharedTokenAuth(s.handleRegisterSlave))
+	mux.HandleFunc("/v1/slaves/unregister", s.withSharedTokenAuth(s.handleUnregisterSlave))
+	mux.HandleFunc("/v1/slaves/sync", s.withSharedTokenAuth(s.handleSyncSlaves))
+	mux.HandleFunc("/v1/slaves", s.withSharedTokenAuth(s.handleListSlaves))
 	return mux
+}
+
+func (s *Server) withSharedTokenAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		expected := strings.TrimSpace(s.cfg.Master.SharedToken)
+		if expected == "" {
+			http.Error(w, "controller shared token is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		token := controllerRequestToken(r)
+		if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func controllerRequestToken(r *http.Request) string {
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+		return strings.TrimSpace(auth[7:])
+	}
+	return strings.TrimSpace(r.Header.Get("X-Controller-Token"))
 }
 
 func (s *Server) StartWorkerLoop() {
