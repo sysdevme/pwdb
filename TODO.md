@@ -27,7 +27,9 @@ Last reviewed: 2026-06-15
 ### Dependency Security
 
 - [ ] Upgrade `github.com/jackc/pgx/v5` from `5.5.5` to at least `5.9.2` to resolve Dependabot alerts [#6](https://github.com/sysdevme/pwdb/security/dependabot/6) (critical memory-safety issue) and [#7](https://github.com/sysdevme/pwdb/security/dependabot/7) (SQL placeholder confusion).
-- [ ] Upgrade `golang.org/x/crypto` from `0.22.0` to at least `0.45.0` to resolve Dependabot alerts [#1](https://github.com/sysdevme/pwdb/security/dependabot/1), [#2](https://github.com/sysdevme/pwdb/security/dependabot/2), [#3](https://github.com/sysdevme/pwdb/security/dependabot/3), and [#4](https://github.com/sysdevme/pwdb/security/dependabot/4).
+- [ ] Upgrade root `golang.org/x/crypto` from `0.22.0` to at least `0.45.0` to resolve Dependabot alerts [#1](https://github.com/sysdevme/pwdb/security/dependabot/1), [#2](https://github.com/sysdevme/pwdb/security/dependabot/2), [#3](https://github.com/sysdevme/pwdb/security/dependabot/3), and [#4](https://github.com/sysdevme/pwdb/security/dependabot/4).
+- [ ] Upgrade desktop `golang.org/x/crypto` to at least `0.45.0` to resolve alerts [#8](https://github.com/sysdevme/pwdb/security/dependabot/8), [#10](https://github.com/sysdevme/pwdb/security/dependabot/10), [#12](https://github.com/sysdevme/pwdb/security/dependabot/12), and [#13](https://github.com/sysdevme/pwdb/security/dependabot/13).
+- [ ] Upgrade desktop `golang.org/x/net` from `0.25.0` to at least `0.38.0` to resolve alerts [#9](https://github.com/sysdevme/pwdb/security/dependabot/9) and [#11](https://github.com/sysdevme/pwdb/security/dependabot/11).
 - [ ] Re-run root tests, `go vet`, and Dependabot verification after dependency upgrades.
 
 ### Test And CI Work
