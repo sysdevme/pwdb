@@ -32,6 +32,7 @@
               <a class="btn btn-sm btn-outline-primary" href="{{ .URL }}">View</a>
               <button type="button" class="btn btn-sm btn-outline-secondary" data-id="{{ .ID }}" data-name="{{ .Name }}" onclick="openTagEdit(this)">Edit</button>
               <form method="post" action="/tags/remove" onsubmit="return confirm('Remove tag from all records?');">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                 <input type="hidden" name="id" value="{{ .ID }}">
                 <button class="btn btn-sm btn-outline-danger" type="submit">Remove</button>
               </form>
@@ -65,6 +66,7 @@
 {{ end }}
 {{ end }}
 <form id="tagEditForm" method="post" action="/tags/edit" class="d-none">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
   <input type="hidden" name="id" id="tagEditID">
   <input type="hidden" name="new_name" id="tagEditNewName">
 </form>

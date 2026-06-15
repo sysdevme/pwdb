@@ -54,6 +54,7 @@
   </head>
   <body>
     <form id="pm-bio-unlock-form" method="POST" action="/auth/biometric-unlock" style="display:none">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
       <input type="hidden" name="token" id="pm-bio-token" value="">
       <input type="hidden" name="next" id="pm-bio-next" value="">
       <input type="hidden" name="unlock_minutes" id="pm-bio-unlock-minutes" value="{{ .UnlockMinutesDefault }}">
@@ -150,6 +151,7 @@
                 <li><button type="button" class="dropdown-item" id="unlockButton">Unlock</button></li>
                 <li>
                   <form method="post" action="/lock">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                     <button type="submit" class="dropdown-item">Lock</button>
                   </form>
                 </li>
@@ -158,6 +160,7 @@
                 {{ end }}
                 <li>
                   <form method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                     <button type="submit" class="dropdown-item">Logout</button>
                   </form>
                 </li>
@@ -212,6 +215,7 @@
           </div>
           <div class="modal-body">
             <form method="post" action="/auth/biometric-unlock" id="unlockForm">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
               <input type="hidden" name="next" id="unlockNext" value="{{ .RequestPath }}">
               <div class="mb-3">
                 <label class="form-label">Unlock Duration (minutes)</label>
@@ -295,6 +299,7 @@
           if (!data.token) throw new Error("No token");
           const form = new URLSearchParams();
           form.set("token", data.token);
+          form.set("csrf_token", "{{ .CSRFToken }}");
           if (nextPath) form.set("next", nextPath);
           form.set("unlock_minutes", String(getRequestedUnlockMinutes()));
           const serverResp = await fetch("/auth/biometric-unlock", {

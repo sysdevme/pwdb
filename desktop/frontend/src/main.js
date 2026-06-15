@@ -65,7 +65,7 @@ function renderWelcome() {
       <section class="welcome-hero">
         <div class="hero-copy">
           <p class="eyebrow">${escapeHtml(state.info.name)}</p>
-          <h1>Desktop access for your vault, without the browser chrome.</h1>
+          <h1>Un1t password manager</h1>
           <p class="lede">
             Connect to a master or slave node, authenticate, and open your password and note records in a focused desktop workspace.
           </p>

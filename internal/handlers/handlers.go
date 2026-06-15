@@ -40,7 +40,7 @@ const userCtxKey ctxKey = 1
 const (
 	defaultPageSize               = 10
 	defaultUnlockMinutes          = 5
-	defaultAppVersion             = "4.1.0"
+	defaultAppVersion             = "4.1.1"
 	defaultBuildAuthor            = "unknown"
 	defaultBuildLastUpdate        = "unknown"
 	controllerHealthcheckInterval = 30 * time.Second
@@ -396,7 +396,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/admin/records/clear-groups", s.handleAdminClearRecordGroups)
 	mux.HandleFunc("/admin/tags/clear-all", s.handleAdminClearAllTags)
 	mux.HandleFunc("/admin/groups/clear-all", s.handleAdminClearAllGroups)
-	return s.requestLogMiddleware(s.authMiddleware(mux))
+	return s.requestLogMiddleware(s.authMiddleware(s.csrfMiddleware(mux)))
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -5331,6 +5331,7 @@ func (s *Server) renderWithUnlock(w http.ResponseWriter, r *http.Request, page s
 		appVersion = defaultAppVersion
 	}
 	data["AppVersion"] = appVersion
+	data["CSRFToken"] = csrfTokenFromContext(r.Context())
 	data["UnlockMinutesDefault"] = settings.UnlockMinutes
 	data["Unlocked"] = s.isUnlocked(r)
 	data["UnlockSeconds"] = s.unlockRemainingSeconds(r)

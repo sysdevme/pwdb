@@ -51,6 +51,7 @@
 
     <h2 class="h5">Compose</h2>
     <form method="post" action="/messages/send">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
       <div class="row g-2">
         <div class="col-md-4">
           <select name="to_email" class="form-select" required {{ if .Locked }}disabled{{ end }}>
@@ -101,6 +102,7 @@
                           <span class="badge text-bg-warning">unread</span>
                         {{ else }}
                           <form method="post" action="/messages/read" class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                             <input type="hidden" name="id" value="{{ .ID }}">
                             <button class="btn btn-sm btn-outline-warning" type="submit">Mark read</button>
                           </form>

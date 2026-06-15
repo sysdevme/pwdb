@@ -10,6 +10,7 @@
   <div class="card-body">
     <h5 class="card-title">Display And Session</h5>
     <form method="post" action="/settings">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
       <div class="mb-3">
         <label class="form-label">Records Per Page</label>
         <select name="page_size" class="form-select">
@@ -53,6 +54,7 @@
   <div class="card-body">
     <h5 class="card-title">Node Role</h5>
     <form method="post" action="/settings">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
       <input type="hidden" name="action" value="server_mode">
       <div class="mb-3">
         <label class="form-label d-block">Mode</label>

@@ -28,6 +28,7 @@
                   <td>{{ if .IsAdmin }}Admin{{ else }}User{{ end }}</td>
                   <td>
                     <form method="post" action="/admin/users/role" class="d-flex gap-2">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                       <input type="hidden" name="user_id" value="{{ .ID }}">
                       <select name="role" class="form-select form-select-sm" style="max-width: 130px;">
                         <option value="user" {{ if not .IsAdmin }}selected{{ end }}>User</option>
@@ -39,6 +40,7 @@
                   <td>{{ .CreatedAt.Format "2006-01-02" }}</td>
                   <td>
                     <form method="post" action="/admin/users/update" class="row g-2">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                       <input type="hidden" name="user_id" value="{{ .ID }}">
                       <div class="col-md-4">
                         <input type="password" name="login_password" class="form-control" placeholder="Login password" required>

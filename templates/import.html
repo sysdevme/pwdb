@@ -1,6 +1,7 @@
 {{ define "content" }}
 <h1 class="h3 mb-3">Import from 1Password (.1pif)</h1>
 <form method="post" action="/import/1password" enctype="multipart/form-data" id="importForm">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
   <div class="mb-3">
     <label class="form-label">CSV File</label>
     <input type="file" name="file" class="form-control" accept=".1pif,.txt" required>

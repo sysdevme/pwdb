@@ -22,6 +22,7 @@
               <div class="alert alert-danger">{{ .Error }}</div>
               {{ end }}
               <form method="post" action="/login">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                 <div class="mb-4">
                   <label class="form-label">Email address</label>
                   <input type="email" name="email" class="form-control" required>

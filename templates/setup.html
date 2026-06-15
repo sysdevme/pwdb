@@ -1,6 +1,7 @@
 {{ define "content" }}
 <h1 class="h3 mb-3">Create Admin</h1>
 <form method="post" action="/setup">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
   <div class="mb-3">
     <label class="form-label d-block">Server Mode</label>
     <div class="form-check">

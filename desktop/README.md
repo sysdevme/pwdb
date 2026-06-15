@@ -1,80 +1,43 @@
 # PWDB Desktop
 
-Standalone Wails-based desktop client scaffold for macOS, kept in the same repository as the server and controller.
+Standalone Wails-based desktop client for macOS, kept in the same repository as the server and controller.
 
 ## Current scope
 
-- Target platform: macOS
-- Development can happen on Linux/Debian, but real GUI testing should happen on the Mac laptop
-- Current implementation is a read-only shell:
-  - remembers `server_url` and `email`
-  - tests server reachability
-  - prepares the structure for the initial desktop JSON API
+- Target platform: macOS.
+- Development and package tests can run on Linux, but real GUI and biometric testing require macOS.
+- The client is currently read-only and supports:
+  - saved server URL and email settings;
+  - server reachability checks;
+  - login and logout through the desktop JSON API;
+  - password and secure-note lists;
+  - metadata detail views;
+  - master-password confirmation before secret fields are revealed.
 
-## What is already here
+Session tokens currently remain in process memory. Persistent macOS Keychain storage is still pending.
 
-- standalone `desktop/go.mod`
-- Wails app bootstrap
-- config persistence under the user's config directory
-- simple connection test against `/login`
-- frontend shell for node selection and future vault view
-- `build_macos.sh` helper for dependency install + macOS build
-
-## What is still missing
-
-- desktop frontend wiring to the new API
-- token storage in macOS Keychain
-- polished item copy/view flows
-
-## Current server API for desktop MVP
+## Server API
 
 - `POST /api/desktop/login`
 - `POST /api/desktop/logout`
 - `GET /api/desktop/passwords`
 - `GET /api/desktop/passwords/:id`
 - `POST /api/desktop/passwords/:id/unlock`
+- `GET /api/desktop/notes`
+- `GET /api/desktop/notes/:id`
+- `POST /api/desktop/notes/:id/unlock`
 
-Current model:
-
-- desktop login uses the same server-side session storage as the web app
-- desktop auth is sent as `Authorization: Bearer <session-token>`
-- password list/detail endpoints return metadata
-- plaintext secret retrieval is separated into `/unlock` and requires `master_password`
-
-Example login:
-
-```bash
-curl -sS -X POST "http://127.0.0.1:8080/api/desktop/login" \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@example.com","password":"login-password"}'
-```
-
-Example list:
-
-```bash
-curl -sS "http://127.0.0.1:8080/api/desktop/passwords" \
-  -H "Authorization: Bearer <session-token>"
-```
-
-Example unlock:
-
-```bash
-curl -sS -X POST "http://127.0.0.1:8080/api/desktop/passwords/<id>/unlock" \
-  -H "Authorization: Bearer <session-token>" \
-  -H "Content-Type: application/json" \
-  -d '{"master_password":"master-password"}'
-```
-
-Do not build the desktop client on top of HTML parsing or browser-cookie emulation if this can be avoided.
+Desktop authentication uses `Authorization: Bearer <session-token>`. List and detail endpoints return metadata; plaintext retrieval is isolated in `/unlock` requests and requires `master_password`.
 
 ## Build on macOS Tahoe
 
 Prerequisites:
 
-- Go
-- Node.js + npm
+- Go 1.22 or newer
+- Node.js and npm
 - Xcode Command Line Tools
-- network access for Go/npm dependencies
+- Wails build dependencies
+- network access for dependency installation
 
 Run:
 
@@ -93,8 +56,17 @@ cd ..
 wails dev
 ```
 
-## Notes
+For package verification:
 
-- This scaffold is intentionally safe and incomplete.
-- It should be treated as the desktop foundation, not as a finished client.
-- The next practical step is wiring the frontend to the desktop API and then extending the API to notes and richer session handling.
+```bash
+cd desktop
+go test ./...
+go vet ./...
+```
+
+## Remaining work
+
+- Store desktop session tokens in macOS Keychain.
+- Polish copy actions and item detail workflows.
+- Add automated tests for the desktop HTTP client and config store.
+- Validate the packaged GUI and biometric flow on macOS hardware.

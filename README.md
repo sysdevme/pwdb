@@ -1,7 +1,7 @@
 # Password Manager (Go) - Unified README
 
 Default development branch: `v4`.
-Current release tag: `4.1.0`.
+Current release tag: `4.1.1`.
 
 This repository now combines:
 
@@ -28,12 +28,31 @@ It is not production-ready and should not be exposed directly to the public inte
 
 ## Controller auth flow
 
-As of `4.1.0`, controller auth is split into three paths:
+As of `4.1.1`, controller auth is split into three paths:
 
 - Controller -> master operational calls use a rotating per-controller bearer token after bootstrap approval.
 - Controller -> slave apply calls use a one-time short-lived slave grant issued by master.
 - Controller local `/v1/...` management calls require `CONTROLLER_SHARED_TOKEN`.
 - Health/status endpoints are read-only and no longer carry controller secrets.
+
+## Release 4.1.1
+
+This hardening release adds:
+
+- Fail-fast startup when `MASTER_PASSWORD` is empty.
+- CSRF protection for browser form POST requests.
+- Tracked SQL migrations with SHA-256 checksums, per-file transactions, and a PostgreSQL advisory lock.
+- Reproducible Wails dependencies through `desktop/go.sum`.
+- An updated desktop client for password and secure-note browsing and unlock flows.
+- An opt-in `collection` Compose profile for the external collection service.
+
+Run the optional collection service with:
+
+```bash
+docker compose --profile collection up --build
+```
+
+The profile expects the external collection project at `/opt/collection`.
 
 ## Security fixes in 4.1.0
 

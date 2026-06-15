@@ -1,6 +1,7 @@
 {{ define "content" }}
 <h1 class="h3 mb-3">{{ .Title }}</h1>
 <form method="post" action="{{ if .Item.ID }}/notes/edit{{ else }}/notes/new{{ end }}">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
   {{ if .Item.ID }}
   <input type="hidden" name="id" value="{{ .Item.ID }}">
   {{ end }}

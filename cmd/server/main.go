@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -15,8 +16,8 @@ import (
 func main() {
 	addr := envOr("APP_ADDR", ":8080")
 	master := os.Getenv("MASTER_PASSWORD")
-	if master == "" {
-		log.Println("warning: MASTER_PASSWORD not set")
+	if err := validateMasterPassword(master); err != nil {
+		log.Fatal(err)
 	}
 
 	ctx := context.Background()
@@ -45,6 +46,13 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func validateMasterPassword(master string) error {
+	if len(master) == 0 {
+		return fmt.Errorf("MASTER_PASSWORD must be set")
+	}
+	return nil
 }
 
 func envOr(key, fallback string) string {

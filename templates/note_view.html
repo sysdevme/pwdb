@@ -33,6 +33,7 @@
 {{ else }}
   {{ if .Unlocked }}
     <form method="post" action="/notes/view" data-require-unlock>
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
       <input type="hidden" name="id" value="{{ .ItemID }}">
       <button class="btn btn-primary" type="submit">View</button>
       <a class="btn btn-outline-secondary" href="/notes">Cancel</a>
@@ -53,6 +54,7 @@
         </div>
       {{ end }}
       <form method="post" action="/notes/share">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
         <input type="hidden" name="id" value="{{ .ItemID }}">
         <div class="row g-2">
           <div class="col-md-8">

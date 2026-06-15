@@ -8,3 +8,7 @@ bin/
 
 # local Windows helper
 scripts/make.bat
+
+# desktop frontend build output
+/desktop/frontend/node_modules/
+/desktop/frontend/dist/

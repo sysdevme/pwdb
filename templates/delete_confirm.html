@@ -11,6 +11,7 @@
 </div>
 
 <form method="post" action="{{ .DeletePath }}" data-require-unlock>
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
   <input type="hidden" name="id" value="{{ .ItemID }}">
   <div class="mb-3">
     <label class="form-label">Item</label>

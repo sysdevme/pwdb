@@ -637,7 +637,7 @@ func (s *Store) SetServerProfile(ctx context.Context, profile models.ServerProfi
 		appVersion = strings.TrimSpace(os.Getenv("APP_VERSION"))
 	}
 	if appVersion == "" {
-		appVersion = "4.1.0"
+		appVersion = "4.1.1"
 	}
 	_, err = s.pool.Exec(
 		ctx,
@@ -665,7 +665,7 @@ func (s *Store) InitializeSetup(ctx context.Context, profile models.ServerProfil
 		appVersion = strings.TrimSpace(os.Getenv("APP_VERSION"))
 	}
 	if appVersion == "" {
-		appVersion = "4.1.0"
+		appVersion = "4.1.1"
 	}
 	id, err := parseOrNewUUID(user.ID)
 	if err != nil {

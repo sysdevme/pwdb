@@ -12,6 +12,7 @@
       <div class="card-body">
         <h5 class="card-title">Block IP</h5>
         <form method="post" action="/admin/guard/block">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
           <div class="mb-3">
             <label class="form-label">Client IP</label>
             <input type="text" name="client_ip" class="form-control" placeholder="203.0.113.10" required>
@@ -48,6 +49,7 @@
                 <td>{{ .BlockedFor }}</td>
                 <td class="text-end">
                   <form method="post" action="/admin/guard/unblock">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                     <input type="hidden" name="client_ip" value="{{ .IP }}">
                     <button class="btn btn-sm btn-outline-secondary" type="submit">Remove</button>
                   </form>

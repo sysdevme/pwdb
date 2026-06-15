@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16
+    restart: unless-stopped
     env_file:
       - .env
     ports:
@@ -13,6 +14,7 @@ services:
       timeout: 3s
       retries: 10
   app:
+    restart: unless-stopped
     build:
       context: .
     env_file:
@@ -22,6 +24,23 @@ services:
     depends_on:
       db:
         condition: service_healthy
+  collection:
+    profiles: ["collection"]
+    restart: unless-stopped
+    build:
+      context: /opt/collection
+    environment:
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/collection?sslmode=disable"
+      MEDIA_ROOT: "/var/lib/collection/media"
+    ports:
+      - "${COLLECTION_HOST_BIND_IP:-10.8.0.1}:${COLLECTION_HOST_BIND_PORT:-8081}:8080"
+    volumes:
+      - collection_media:/var/lib/collection/media
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   pm_data:
+  collection_media:

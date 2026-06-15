@@ -67,6 +67,7 @@
       <h5 class="card-title">Rebuild From Import Raw</h5>
       <p class="card-text">Re-parse stored import_raw and update entries with the latest parser.</p>
       <form method="post" action="/admin/rebuild" id="rebuildForm">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
         <button class="btn btn-outline-primary" type="submit" id="rebuildSubmit">Rebuild Now</button>
       </form>
       <div class="mt-2 d-none" id="rebuildSpinner">
@@ -81,6 +82,7 @@
       <h5 class="card-title">Service Control</h5>
       <p class="card-text text-muted">Restart the current node service process. Use only in trusted self-hosted environments.</p>
       <form method="post" action="/admin/service/restart">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
         <button class="btn btn-warning" type="submit">Restart Service</button>
       </form>
     </div>
@@ -91,6 +93,7 @@
       <h5 class="card-title">Restore</h5>
       <p class="card-text">Restore from a backup JSON file.</p>
       <form method="post" action="/admin/restore" enctype="multipart/form-data" id="restoreForm">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
         <div class="mb-3">
           <input type="file" name="file" class="form-control" accept=".json" required>
         </div>
@@ -107,6 +110,7 @@
       <h5 class="card-title">Controller Links</h5>
       {{ if and .AdminServerProfile (eq .AdminServerProfile.ServerMode "AS-M") }}
       <form method="post" action="/admin/controller-links/cleanup" class="mb-3">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
         <button class="btn btn-sm btn-outline-secondary" type="submit">Cleanup Duplicate Endpoints</button>
       </form>
       {{ end }}
@@ -185,6 +189,7 @@
       <hr class="my-4">
       <h6>Controller Registry</h6>
       <form method="post" action="/admin/controllers/cleanup-stale" class="d-flex align-items-end gap-2 mb-3">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
         <div>
           <label class="form-label form-label-sm">Disable controllers inactive for (minutes)</label>
           <input type="number" min="1" step="1" name="age_minutes" value="1440" class="form-control form-control-sm">
@@ -212,6 +217,7 @@
               <td><code>{{ .ControllerID }}</code></td>
               <td>
                 <form method="post" action="/admin/controllers/weight" class="d-flex align-items-center gap-2">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                   <input type="hidden" name="controller_id" value="{{ .ControllerID }}">
                   <input type="number" min="0" step="1" name="weight" value="{{ .Weight }}" class="form-control form-control-sm" style="max-width: 90px;">
                   <button class="btn btn-sm btn-outline-primary" type="submit">Set</button>
@@ -226,6 +232,7 @@
               <td title="{{ .UpdatedAtAbs }}">{{ .UpdatedAt }}</td>
               <td>
                 <form method="post" action="/admin/controllers/status" class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                   <input type="hidden" name="controller_id" value="{{ .ControllerID }}">
                   <input type="hidden" name="status" value="{{ if eq .Status "active" }}disabled{{ else }}active{{ end }}">
                   <button class="btn btn-sm {{ if eq .Status "active" }}btn-outline-secondary{{ else }}btn-outline-success{{ end }}" type="submit">
@@ -333,6 +340,7 @@
       <div class="row g-3">
         <div class="col-lg-6">
           <form method="post" action="/admin/records/clear-tags" class="p-3 border rounded">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
             <label class="form-label fw-semibold">Clean Tags For Record</label>
             <input type="text" name="record_id" class="form-control mb-2" placeholder="Record UUID" required>
             <button class="btn btn-outline-danger btn-sm" type="submit">Clean Record Tags</button>
@@ -340,6 +348,7 @@
         </div>
         <div class="col-lg-6">
           <form method="post" action="/admin/records/clear-groups" class="p-3 border rounded">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
             <label class="form-label fw-semibold">Clean Groups For Record</label>
             <input type="text" name="record_id" class="form-control mb-2" placeholder="Record UUID" required>
             <button class="btn btn-outline-danger btn-sm" type="submit">Clean Record Groups</button>
@@ -347,6 +356,7 @@
         </div>
         <div class="col-lg-6">
           <form method="post" action="/admin/tags/clear-all" class="p-3 border rounded">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
             <label class="form-label fw-semibold">Clear Tags Table</label>
             <div class="small text-muted mb-2">Removes all tags and all tag links for all records.</div>
             <button class="btn btn-danger btn-sm" type="submit">Clear All Tags</button>
@@ -354,6 +364,7 @@
         </div>
         <div class="col-lg-6">
           <form method="post" action="/admin/groups/clear-all" class="p-3 border rounded">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
             <label class="form-label fw-semibold">Clear Groups Table</label>
             <div class="small text-muted mb-2">Removes all groups and all group links for all records.</div>
             <button class="btn btn-danger btn-sm" type="submit">Clear All Groups</button>
@@ -372,6 +383,7 @@
         <div class="modal-body">
           <p class="text-muted">New users are created in pending status and become active after their first successful login.</p>
           <form method="post" action="/admin/users">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
             <div class="mb-3">
               <label class="form-label">Email</label>
               <input type="email" name="email" class="form-control" required>
@@ -419,6 +431,7 @@
                       <td>{{ .CreatedAt.Format "2006-01-02" }}</td>
                       <td>
                         <form method="post" action="/admin/users/update" class="row g-2">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                           <input type="hidden" name="user_id" value="{{ .ID }}">
                           <div class="col-md-4">
                             <input type="password" name="login_password" class="form-control" placeholder="Login password" required>
