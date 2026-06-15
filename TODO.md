@@ -24,6 +24,14 @@ Last reviewed: 2026-06-15
 
 ## P1 - Tests And CI
 
+### Dependency Security
+
+- [ ] Upgrade `github.com/jackc/pgx/v5` from `5.5.5` to at least `5.9.2` to resolve Dependabot alerts [#6](https://github.com/sysdevme/pwdb/security/dependabot/6) (critical memory-safety issue) and [#7](https://github.com/sysdevme/pwdb/security/dependabot/7) (SQL placeholder confusion).
+- [ ] Upgrade `golang.org/x/crypto` from `0.22.0` to at least `0.45.0` to resolve Dependabot alerts [#1](https://github.com/sysdevme/pwdb/security/dependabot/1), [#2](https://github.com/sysdevme/pwdb/security/dependabot/2), [#3](https://github.com/sysdevme/pwdb/security/dependabot/3), and [#4](https://github.com/sysdevme/pwdb/security/dependabot/4).
+- [ ] Re-run root tests, `go vet`, and Dependabot verification after dependency upgrades.
+
+### Test And CI Work
+
 - [ ] Add rollback tests for setup failure and restore failure.
 - [ ] Add PostgreSQL integration tests for migrations, sharing, setup, and restore.
 - [ ] Add HTTP tests for login, sessions, admin handlers, and desktop API.
